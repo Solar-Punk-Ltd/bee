@@ -43,8 +43,10 @@ func (s *Service) socUploadHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	headers := struct {
-		BatchID []byte `map:"Swarm-Postage-Batch-Id" validate:"required"`
-		Pin     bool   `map:"Swarm-Pin"`
+		BatchID        []byte        `map:"Swarm-Postage-Batch-Id" validate:"required"`
+		Pin            bool          `map:"Swarm-Pin"`
+		Act            bool          `map:"Swarm-Act"`
+		HistoryAddress swarm.Address `map:"Swarm-Act-History-Address"`
 	}{}
 	if response := s.mapStructure(r.Header, &headers); response != nil {
 		response("invalid header params", logger, w)
@@ -155,6 +157,15 @@ func (s *Service) socUploadHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	reference := sch.Address()
+	if headers.Act {
+		reference, err = s.actEncryptionHandler(r.Context(), w, putter, reference, headers.HistoryAddress)
+		if err != nil {
+			jsonhttp.InternalServerError(w, errActUpload)
+			return
+		}
+	}
+
 	err = putter.Put(r.Context(), sch)
 	if err != nil {
 		logger.Debug("write chunk failed", "chunk_address", sch.Address(), "error", err)
@@ -171,5 +182,5 @@ func (s *Service) socUploadHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	jsonhttp.Created(w, chunkAddressResponse{Reference: sch.Address()})
+	jsonhttp.Created(w, socPostResponse{Reference: reference})
 }
