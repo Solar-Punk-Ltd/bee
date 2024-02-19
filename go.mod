@@ -50,6 +50,7 @@ require (
 	golang.org/x/sys v0.15.0
 	golang.org/x/term v0.15.0
 	golang.org/x/time v0.3.0
+	gopkg.in/urfave/cli.v1 v1.20.0
 	gopkg.in/yaml.v2 v2.4.0
 	resenje.org/multex v0.1.0
 	resenje.org/singleflight v0.4.0
