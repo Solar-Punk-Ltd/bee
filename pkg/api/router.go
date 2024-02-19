@@ -11,7 +11,6 @@ import (
 	"net/http/pprof"
 	"strings"
 
-	"github.com/ethersphere/bee/v2/pkg/auth"
 	"github.com/ethersphere/bee/v2/pkg/jsonhttp"
 	"github.com/ethersphere/bee/v2/pkg/log/httpaccess"
 	"github.com/ethersphere/bee/v2/pkg/swarm"
@@ -34,7 +33,7 @@ func (s *Service) MountTechnicalDebug() {
 	s.mountTechnicalDebug()
 
 	s.Handler = web.ChainHandlers(
-		httpaccess.NewHTTPAccessLogHandler(s.logger, s.tracer, "debug api access"),
+		httpaccess.NewHTTPAccessLogHandler(s.logger, s.tracer, "api access"),
 		handlers.CompressHandler,
 		s.corsHandler,
 		web.NoCacheHeadersHandler,
@@ -46,7 +45,7 @@ func (s *Service) MountDebug() {
 	s.mountBusinessDebug()
 
 	s.Handler = web.ChainHandlers(
-		httpaccess.NewHTTPAccessLogHandler(s.logger, s.tracer, "debug api access"),
+		httpaccess.NewHTTPAccessLogHandler(s.logger, s.tracer, "api access"),
 		handlers.CompressHandler,
 		s.corsHandler,
 		web.NoCacheHeadersHandler,
@@ -142,11 +141,7 @@ func (s *Service) mountTechnicalDebug() {
 	s.router.Handle("/debug/pprof/symbol", http.HandlerFunc(pprof.Symbol))
 	s.router.Handle("/debug/pprof/trace", http.HandlerFunc(pprof.Trace))
 
-	pprofRootHandlerF := pprof.Index
-	if s.Restricted {
-		pprofRootHandlerF = web.ChainHandlers(auth.PermissionCheckHandler(s.auth), web.FinalHandler(http.HandlerFunc(pprof.Index))).ServeHTTP
-	}
-	s.router.PathPrefix("/debug/pprof/").Handler(http.HandlerFunc(pprofRootHandlerF))
+	s.router.PathPrefix("/debug/pprof/").Handler(http.HandlerFunc(pprof.Index))
 	s.router.Handle("/debug/vars", expvar.Handler())
 
 	s.router.Handle("/loggers", jsonhttp.MethodHandler{
@@ -214,10 +209,12 @@ func (s *Service) mountAPI() {
 		"GET": web.ChainHandlers(
 			s.contentLengthMetricMiddleware(),
 			s.newTracingHandler("bytes-download"),
+			s.actDecryptionHandler(),
 			web.FinalHandlerFunc(s.bytesGetHandler),
 		),
 		"HEAD": web.ChainHandlers(
 			s.newTracingHandler("bytes-head"),
+			s.actDecryptionHandler(),
 			web.FinalHandlerFunc(s.bytesHeadHandler),
 		),
 	})
@@ -235,8 +232,14 @@ func (s *Service) mountAPI() {
 	))
 
 	handle("/chunks/{address}", jsonhttp.MethodHandler{
-		"GET":  http.HandlerFunc(s.chunkGetHandler),
-		"HEAD": http.HandlerFunc(s.hasChunkHandler),
+		"GET": web.ChainHandlers(
+			s.actDecryptionHandler(),
+			web.FinalHandlerFunc(s.chunkGetHandler),
+		),
+		"HEAD": web.ChainHandlers(
+			s.actDecryptionHandler(),
+			web.FinalHandlerFunc(s.hasChunkHandler),
+		),
 	})
 
 	handle("/soc/{owner}/{id}", jsonhttp.MethodHandler{
@@ -262,6 +265,21 @@ func (s *Service) mountAPI() {
 		),
 	})
 
+	handle("/grantee", jsonhttp.MethodHandler{
+		"POST": web.ChainHandlers(
+			web.FinalHandlerFunc(s.actCreateGranteesHandler),
+		),
+	})
+
+	handle("/grantee/{address}", jsonhttp.MethodHandler{
+		"GET": web.ChainHandlers(
+			web.FinalHandlerFunc(s.actListGranteesHandler),
+		),
+		"PATCH": web.ChainHandlers(
+			web.FinalHandlerFunc(s.actGrantRevokeHandler),
+		),
+	})
+
 	handle("/bzz/{address}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		u := r.URL
 		u.Path += "/"
@@ -272,9 +290,11 @@ func (s *Service) mountAPI() {
 		"GET": web.ChainHandlers(
 			s.contentLengthMetricMiddleware(),
 			s.newTracingHandler("bzz-download"),
+			s.actDecryptionHandler(),
 			web.FinalHandlerFunc(s.bzzDownloadHandler),
 		),
 		"HEAD": web.ChainHandlers(
+			s.actDecryptionHandler(),
 			web.FinalHandlerFunc(s.bzzHeadHandler),
 		),
 	})
@@ -351,29 +371,10 @@ func (s *Service) mountAPI() {
 		httpaccess.NewHTTPAccessSuppressLogHandler(),
 		web.FinalHandlerFunc(s.healthHandler),
 	))
-
-	if s.Restricted {
-		handle("/auth", jsonhttp.MethodHandler{
-			"POST": web.ChainHandlers(
-				jsonhttp.NewMaxBodyBytesHandler(512),
-				web.FinalHandlerFunc(s.authHandler),
-			),
-		})
-		handle("/refresh", jsonhttp.MethodHandler{
-			"POST": web.ChainHandlers(
-				jsonhttp.NewMaxBodyBytesHandler(512),
-				web.FinalHandlerFunc(s.refreshHandler),
-			),
-		})
-	}
 }
 
 func (s *Service) mountBusinessDebug() {
 	handle := func(path string, handler http.Handler) {
-		s.logger.Warning("DEPRECATION NOTICE: This endpoint is now part of the main Bee API. The Debug API will be removed in the next release, version [2.2.0]. Update your integrations to use the main Bee API to avoid service disruptions.")
-		if s.Restricted {
-			handler = web.ChainHandlers(auth.PermissionCheckHandler(s.auth), web.FinalHandler(handler))
-		}
 		s.router.Handle(path, handler)
 		s.router.Handle(rootPath+path, handler)
 	}
@@ -413,9 +414,9 @@ func (s *Service) mountBusinessDebug() {
 		"DELETE": http.HandlerFunc(s.peerDisconnectHandler),
 	})
 
-	handle("/chunks/{address}", jsonhttp.MethodHandler{
-		"GET": http.HandlerFunc(s.hasChunkHandler),
-	})
+	//handle("/chunks/{address}", jsonhttp.MethodHandler{
+	//	"GET": http.HandlerFunc(s.hasChunkHandler),
+	//})
 
 	handle("/topology", jsonhttp.MethodHandler{
 		"GET": http.HandlerFunc(s.topologyHandler),
