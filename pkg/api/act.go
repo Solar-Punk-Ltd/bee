@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -14,10 +15,22 @@ import (
 	"github.com/ethersphere/bee/pkg/manifest/simple"
 	"github.com/ethersphere/bee/pkg/sctx"
 	"golang.org/x/crypto/scrypt"
+	"golang.org/x/crypto/sha3"
 	cli "gopkg.in/urfave/cli.v1"
 )
 
+type Act interface {
+	upload(publisher string, salt []byte) (*AccessEntry, error)
+	NewAccessEntryPassword(salt []byte, kdfParams *KdfParams) (*AccessEntry, error)
+	NOOPDecrypt(*ManifestEntry) error
+	NewKdfParams(n, p, r int) *KdfParams
+	NewSessionKeyPassword(password string, accessEntry *AccessEntry) ([]byte, error)
+	create(ctx *cli.Context, ref string, accessKey []byte, ae *AccessEntry) (*simple.Manifest, error)
+	DoPassword(ctx *cli.Context, password string, salt []byte) (sessionKey []byte, ae *AccessEntry, err error)
+}
+
 var (
+	ErrSaltLength             = errors.New("salt should be 32 bytes long")
 	ErrDecrypt                = errors.New("cant decrypt - forbidden")
 	ErrUnknownAccessType      = errors.New("unknown access type (or not implemented)")
 	ErrDecryptDomainForbidden = errors.New("decryption request domain forbidden - can only decrypt on localhost")
@@ -31,15 +44,15 @@ const EmptyCredentials = ""
 
 // ManifestEntry represents an entry in a swarm manifest
 type ManifestEntry struct {
-	Hash        string       `json:"hash,omitempty"`
-	Path        string       `json:"path,omitempty"`
-	ContentType string       `json:"contentType,omitempty"`
-	Mode        int64        `json:"mode,omitempty"`
-	Size        int64        `json:"size,omitempty"`
-	ModTime     time.Time    `json:"mod_time,omitempty"`
-	Status      int          `json:"status,omitempty"`
-	Access      *AccessEntry `json:"access,omitempty"`
-	Feed        *feeds.Feed  `json:"feed,omitempty"`
+	Hash        string
+	Path        string
+	ContentType string
+	Mode        int64
+	Size        int64
+	ModTime     time.Time
+	Status      int
+	Access      *AccessEntry
+	Feed        *feeds.Feed
 }
 
 type AccessEntry struct {
@@ -57,10 +70,34 @@ type Marshaler interface {
 }
 
 type Unmarshaler interface {
-	Unmarshal([]byte) error
+	Unmarshal(value []byte) error
 }
 
-// TODO marshal and unmarshal
+// Marshal returns the JSON encoding of the AccessEntry.
+// It marshals the AccessEntry struct into a byte slice using the json.Marshal function.
+// If an error occurs during marshaling, it returns the error.
+func (a *AccessEntry) Marshal() ([]byte, error) {
+	return json.Marshal(a)
+}
+
+// Unmarshal unmarshals the given byte slice into the AccessEntry struct.
+// It uses JSON unmarshaling to populate the fields of the struct.
+// If the unmarshaling fails, it returns an error.
+// After unmarshaling, it checks if the length of the Salt field is 32 bytes.
+// If not, it returns an error indicating that the salt should be 32 bytes long.
+// Finally, it decodes the Salt field from hexadecimal string to byte slice.
+// If the decoding fails, it returns an error.
+func (a *AccessEntry) Unmarshal(value []byte) error {
+	err := json.Unmarshal(value, a)
+	if err != nil {
+		return err
+	}
+	if !saltLengthIs32(a.Salt) {
+		return ErrSaltLength
+	}
+	a.Salt, err = hex.DecodeString(string(a.Salt))
+	return err
+}
 
 type KdfParams struct {
 	N int `json:"n"`
@@ -68,14 +105,37 @@ type KdfParams struct {
 	R int `json:"r"`
 }
 
-type AccessType string
+type AccessType int
 
-const AccessTypePass = AccessType("pass")
+const (
+	AccessTypePass AccessType = iota
+	AccessTypePK
+	AccessTypeACT
+)
+
+func saltLengthIs32(salt []byte) bool {
+	return len(salt) == 32
+}
+
+// upload creates a manifest AccessEntry in order to create an ACT protected by a pair of Elliptic Curve keys
+func upload(publisher string, salt []byte) (*AccessEntry, error) {
+	if len(publisher) != 66 {
+		return nil, fmt.Errorf("publisher should be 66 characters long, got %d", len(publisher))
+	}
+	if !saltLengthIs32(salt) {
+		return nil, ErrSaltLength
+	}
+	return &AccessEntry{
+		Type:      AccessTypePK,
+		Publisher: publisher,
+		Salt:      salt,
+	}, nil
+}
 
 // NewAccessEntryPassword creates a manifest AccessEntry in order to create an ACT protected by a password
 func NewAccessEntryPassword(salt []byte, kdfParams *KdfParams) (*AccessEntry, error) {
-	if len(salt) != 32 {
-		return nil, fmt.Errorf("salt should be 32 bytes long")
+	if !saltLengthIs32(salt) {
+		return nil, ErrSaltLength
 	}
 	return &AccessEntry{
 		Type:      AccessTypePass,
@@ -123,7 +183,7 @@ func sessionKeyPassword(password string, salt []byte, kdfParams *KdfParams) ([]b
 	)
 }
 
-func (a *Service) show(ctx context.Context, credentials string, pk *ecdsa.PrivateKey) DecryptFunc {
+func (a *Service) Show(ctx context.Context, credentials string, pk *ecdsa.PrivateKey) DecryptFunc {
 	return func(m *ManifestEntry) error {
 		if m.Access == nil {
 			return nil
@@ -142,7 +202,7 @@ func (a *Service) show(ctx context.Context, credentials string, pk *ecdsa.Privat
 		}
 
 		switch m.Access.Type {
-		case "pass":
+		case AccessTypePass:
 			if credentials != "" {
 				key, err := NewSessionKeyPassword(credentials, m.Access)
 				if err != nil {
@@ -155,8 +215,7 @@ func (a *Service) show(ctx context.Context, credentials string, pk *ecdsa.Privat
 				}
 
 				//enc := encryption.Encrypt(len(ref) - 8)
-				// TODO nil!
-				decodedRef, err := encryption.New(key, 0, 0, nil).Decrypt(ref)
+				decodedRef, err := encryption.New(key, len(ref)-8, uint32(0), sha3.NewLegacyKeccak256).Decrypt(ref)
 				if err != nil {
 					return ErrDecrypt
 				}
@@ -171,14 +230,13 @@ func (a *Service) show(ctx context.Context, credentials string, pk *ecdsa.Privat
 	}
 }
 
-func GenerateAccessControlManifest(ctx *cli.Context, ref string, accessKey []byte, ae *AccessEntry) (*simple.Manifest, error) {
+func Create(ctx *cli.Context, ref string, accessKey []byte, ae *AccessEntry) (*simple.Manifest, error) {
 	refBytes, err := hex.DecodeString(ref)
 	if err != nil {
 		return nil, err
 	}
 	// encrypt ref with accessKey
-	// TODO nil!
-	encrypted, err := encryption.New(accessKey, 0, 0, nil).Encrypt(refBytes)
+	encrypted, err := encryption.New(accessKey, len(ref)-8, uint32(0), sha3.NewLegacyKeccak256).Encrypt(refBytes)
 	// TODO _ = encrypted
 	_ = encrypted
 	if err != nil {
@@ -186,7 +244,16 @@ func GenerateAccessControlManifest(ctx *cli.Context, ref string, accessKey []byt
 	}
 	vManifest := simple.NewManifest()
 	// TODO Add
-	//vManifest.Add()
+	/*
+		keyMap := make(map[string]string)
+
+		keyMap["Hash"] = hex.EncodeToString(encrypted)
+		keyMap["ContentType"] = manifest.DefaultManifestType
+		keyMap["ModTime"] = time.Now().String()
+		keyMap["Access"] = ae.Act // TODO ???
+		vManifest := simple.NewManifest()
+		vManifest.Add("", "", keyMap)
+	*/
 	/*
 		m := &simple.manifest{
 			Entries: []ManifestEntry{
