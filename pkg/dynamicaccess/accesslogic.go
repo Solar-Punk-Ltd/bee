@@ -11,7 +11,7 @@ import (
 var hashFunc = sha3.NewLegacyKeccak256
 
 type AccessLogic interface {
-	Get(act Act, encryped_ref swarm.Address, publisher ecdsa.PublicKey, tag string) (string, error)
+	Get(act Act, encryped_ref swarm.Address, publisher ecdsa.PublicKey, tag string) (swarm.Address, error)
 	//Add(act *Act, ref string, publisher ecdsa.PublicKey, tag string) (string, error)
 	getLookUpKey(publisher ecdsa.PublicKey, tag string) (string, error)
 	getAccessKeyDecriptionKey(publisher ecdsa.PublicKey, tag string) (string, error)
@@ -117,39 +117,39 @@ func (al *DefaultAccessLogic) getEncryptedAccessKey(act Act, lookup_key string) 
 	return act.Get([]byte(lookup_key)), nil
 }
 
-func (al *DefaultAccessLogic) Get(act Act, encryped_ref swarm.Address, publisher ecdsa.PublicKey, tag string) (string, error) {
+func (al *DefaultAccessLogic) Get(act Act, encryped_ref swarm.Address, publisher ecdsa.PublicKey, tag string) (swarm.Address, error) {
 
 	lookup_key, err := al.getLookUpKey(publisher, tag)
 	if err != nil {
-		return "", err
+		return swarm.EmptyAddress, err
 	}
 	access_key_decryption_key, err := al.getAccessKeyDecriptionKey(publisher, tag)
 	if err != nil {
-		return "", err
+		return swarm.EmptyAddress, err
 	}
 
 	// Lookup encrypted access key from the ACT manifest
 
 	encrypted_access_key, err := al.getEncryptedAccessKey(act, lookup_key)
 	if err != nil {
-		return "", err
+		return swarm.EmptyAddress, err
 	}
 
 	// Decrypt access key
-	access_key_cipher := encryption.New(encryption.Key(access_key_decryption_key), 4096, uint32(0), hashFunc)
+	access_key_cipher := encryption.New(encryption.Key(access_key_decryption_key), 0, uint32(0), hashFunc)
 	access_key, err := access_key_cipher.Decrypt(encrypted_access_key)
 	if err != nil {
-		return "", err
+		return swarm.EmptyAddress, err
 	}
 
 	// Decrypt reference
-	ref_cipher := encryption.New(access_key, 4096, uint32(0), hashFunc)
+	ref_cipher := encryption.New(access_key, 0, uint32(0), hashFunc)
 	ref, err := ref_cipher.Decrypt(encryped_ref.Bytes())
 	if err != nil {
-		return "", err
+		return swarm.EmptyAddress, err
 	}
 
-	return string(ref), nil
+	return swarm.NewAddress(ref), nil
 }
 
 func NewAccessLogic(diffieHellman DiffieHellman) AccessLogic {

@@ -1,18 +1,34 @@
 package dynamicaccess
 
+import (
+	"crypto/ecdsa"
+
+	"github.com/ethersphere/bee/pkg/swarm"
+)
+
 type Controller interface {
+	DownloadHandler(timestamp int64, enryptedRef swarm.Address, publisher *ecdsa.PublicKey, tag string) (swarm.Address, error)
 }
 
 type defaultController struct {
-	histrory History
-	uploader Publish
-	grantee  Grantee
+	history        History
+	granteeManager GranteeManager
+	accessLogic    AccessLogic
 }
 
-func NewController(histrory History, uploader Publish, grantee Grantee) Controller {
+func (c *defaultController) DownloadHandler(timestamp int64, enryptedRef swarm.Address, publisher *ecdsa.PublicKey, tag string) (swarm.Address, error) {
+	act, err := c.history.Lookup(timestamp)
+	if err != nil {
+		return swarm.EmptyAddress, err
+	}
+	addr, err := c.accessLogic.Get(act, enryptedRef, *publisher, tag)
+	return addr, err
+}
+
+func NewController(history History, granteeManager GranteeManager, accessLogic AccessLogic) Controller {
 	return &defaultController{
-		histrory: histrory,
-		uploader: uploader,
-		grantee:  grantee,
+		history:        history,
+		granteeManager: granteeManager,
+		accessLogic:    accessLogic,
 	}
 }

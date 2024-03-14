@@ -4,21 +4,23 @@ import "crypto/ecdsa"
 
 type GranteeManager interface {
 	Get(topic string) []*ecdsa.PublicKey
-	Add(act Act, topic string, addList []*ecdsa.PublicKey) (Act, error)
-	Publish(topic string) Act
+	Add(topic string, addList []*ecdsa.PublicKey) error
+	Publish(act Act, publisher ecdsa.PublicKey, topic string) Act
 
-	HandleGrantees(topic string, addList, removeList []*ecdsa.PublicKey) *Act
+	// HandleGrantees(topic string, addList, removeList []*ecdsa.PublicKey) *Act
 
 	// Load(grantee Grantee)
 	// Save()
 }
+
+var _ GranteeManager = (*granteeManager)(nil)
 
 type granteeManager struct {
 	accessLogic AccessLogic
 	granteeList Grantee
 }
 
-func NewManager(al AccessLogic) *granteeManager {
+func NewGranteeManager(al AccessLogic) *granteeManager {
 	return &granteeManager{accessLogic: al, granteeList: NewGrantee()}
 }
 
