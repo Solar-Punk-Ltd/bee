@@ -2,6 +2,8 @@ package dynamicaccess_test
 
 import (
 	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"encoding/hex"
 	"testing"
 	"time"
@@ -52,6 +54,30 @@ func TestDecrypt(t *testing.T) {
 	}
 	if !addr.Equal(ref) {
 		t.Fatalf("Decrypted chunk address: %s is not the expected: %s", addr, ref)
+	}
+}
+
+func TestEncrypt(t *testing.T) {
+	pk := getPrivateKey()
+	ak := encryption.Key([]byte("cica"))
+
+	dh := dynamicaccess.NewDiffieHellman(pk)
+	aek, _ := dh.SharedSecret(&pk.PublicKey, "", []byte{1})
+	e2 := encryption.New(aek, 0, uint32(0), hashFunc)
+	peak, _ := e2.Encrypt(ak)
+
+	h := mockTestHistory(nil, peak)
+	al := setupAccessLogic(pk)
+	gm := dynamicaccess.NewGranteeManager(al)
+	c := dynamicaccess.NewController(h, gm, al)
+	eref, ref := prepareEncryptedChunkReference(ak)
+
+	key1, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	gm.Add("topic", []*ecdsa.PublicKey{&key1.PublicKey})
+
+	addr, _ := c.UploadHandler(ref, &pk.PublicKey, "topic")
+	if !addr.Equal(eref) {
+		t.Fatalf("Decrypted chunk address: %s is not the expected: %s", addr, eref)
 	}
 }
 

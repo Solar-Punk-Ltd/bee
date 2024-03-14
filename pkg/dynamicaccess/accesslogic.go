@@ -12,6 +12,7 @@ var hashFunc = sha3.NewLegacyKeccak256
 
 type AccessLogic interface {
 	Get(act Act, encryped_ref swarm.Address, publisher ecdsa.PublicKey, tag string) (swarm.Address, error)
+	EncryptRef(act Act, publisherPubKey ecdsa.PublicKey, ref swarm.Address) (swarm.Address, error)
 	//Add(act *Act, ref string, publisher ecdsa.PublicKey, tag string) (string, error)
 	getLookUpKey(publisher ecdsa.PublicKey, tag string) ([]byte, error)
 	getAccessKeyDecriptionKey(publisher ecdsa.PublicKey, tag string) ([]byte, error)
