@@ -13,9 +13,9 @@ var hashFunc = sha3.NewLegacyKeccak256
 type AccessLogic interface {
 	Get(act Act, encryped_ref swarm.Address, publisher ecdsa.PublicKey, tag string) (swarm.Address, error)
 	//Add(act *Act, ref string, publisher ecdsa.PublicKey, tag string) (string, error)
-	getLookUpKey(publisher ecdsa.PublicKey, tag string) (string, error)
-	getAccessKeyDecriptionKey(publisher ecdsa.PublicKey, tag string) (string, error)
-	getEncryptedAccessKey(act Act, lookup_key string) ([]byte, error)
+	getLookUpKey(publisher ecdsa.PublicKey, tag string) ([]byte, error)
+	getAccessKeyDecriptionKey(publisher ecdsa.PublicKey, tag string) ([]byte, error)
+	getEncryptedAccessKey(act Act, lookup_key []byte) ([]byte, error)
 	//createEncryptedAccessKey(ref string)
 	Add_New_Grantee_To_Content(act Act, publisherPubKey, granteePubKey ecdsa.PublicKey) (Act, error)
 	AddPublisher(act Act, publisher ecdsa.PublicKey, tag string) (Act, error)
@@ -35,9 +35,9 @@ func (al *DefaultAccessLogic) AddPublisher(act Act, publisher ecdsa.PublicKey, t
 	access_key_encryption_key, _ := al.getAccessKeyDecriptionKey(publisher, "")
 
 	access_key_cipher := encryption.New(encryption.Key(access_key_encryption_key), 0, uint32(0), hashFunc)
-	encrypted_access_key, _ := access_key_cipher.Encrypt([]byte(access_key))
+	encrypted_access_key, _ := access_key_cipher.Encrypt(access_key)
 
-	act.Add([]byte(lookup_key), encrypted_access_key)
+	act.Add(lookup_key, encrypted_access_key)
 
 	return act, nil
 }
@@ -68,7 +68,7 @@ func (al *DefaultAccessLogic) Add_New_Grantee_To_Content(act Act, publisherPubKe
 	cipher := encryption.New(encryption.Key(access_key_encryption_key), 0, uint32(0), hashFunc)
 	granteeEncryptedAccessKey, _ := cipher.Encrypt(access_key)
 	// Add the new encrypted access key for the Act
-	act.Add([]byte(lookup_key), granteeEncryptedAccessKey)
+	act.Add(lookup_key, granteeEncryptedAccessKey)
 
 	return act, nil
 
@@ -92,29 +92,29 @@ func (al *DefaultAccessLogic) getAccessKey(act Act, publisherPubKey ecdsa.Public
 // func (al *DefaultAccessLogic) CreateAccessKey(reference string) {
 // }
 
-func (al *DefaultAccessLogic) getLookUpKey(publisher ecdsa.PublicKey, tag string) (string, error) {
+func (al *DefaultAccessLogic) getLookUpKey(publisher ecdsa.PublicKey, tag string) ([]byte, error) {
 	zeroByteArray := []byte{0}
 	// Generate lookup key using Diffie Hellman
 	lookup_key, err := al.diffieHellman.SharedSecret(&publisher, tag, zeroByteArray)
 	if err != nil {
-		return "", err
+		return []byte{}, err
 	}
-	return string(lookup_key), nil
+	return lookup_key, nil
 
 }
 
-func (al *DefaultAccessLogic) getAccessKeyDecriptionKey(publisher ecdsa.PublicKey, tag string) (string, error) {
+func (al *DefaultAccessLogic) getAccessKeyDecriptionKey(publisher ecdsa.PublicKey, tag string) ([]byte, error) {
 	oneByteArray := []byte{1}
 	// Generate access key decryption key using Diffie Hellman
 	access_key_decryption_key, err := al.diffieHellman.SharedSecret(&publisher, tag, oneByteArray)
 	if err != nil {
-		return "", err
+		return []byte{}, err
 	}
-	return string(access_key_decryption_key), nil
+	return access_key_decryption_key, nil
 }
 
-func (al *DefaultAccessLogic) getEncryptedAccessKey(act Act, lookup_key string) ([]byte, error) {
-	return act.Get([]byte(lookup_key)), nil
+func (al *DefaultAccessLogic) getEncryptedAccessKey(act Act, lookup_key []byte) ([]byte, error) {
+	return act.Get(lookup_key), nil
 }
 
 func (al *DefaultAccessLogic) Get(act Act, encryped_ref swarm.Address, publisher ecdsa.PublicKey, tag string) (swarm.Address, error) {

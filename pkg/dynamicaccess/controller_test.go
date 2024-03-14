@@ -31,37 +31,38 @@ func mockTestHistory(key, val []byte) dynamicaccess.History {
 
 func TestDecrypt(t *testing.T) {
 	pk := getPrivateKey()
-	ak := encryption.Key("cica")
-	e1 := encryption.New(ak, 0, uint32(0), hashFunc)
+	ak := encryption.Key([]byte("cica"))
+
 	dh := dynamicaccess.NewDiffieHellman(pk)
-	aek, _ := dh.SharedSecret(&pk.PublicKey, "", []byte("1"))
+	aek, _ := dh.SharedSecret(&pk.PublicKey, "", []byte{1})
 	e2 := encryption.New(aek, 0, uint32(0), hashFunc)
-	peak, _ := e2.Encrypt([]byte("cica"))
+	peak, _ := e2.Encrypt(ak)
 
 	h := mockTestHistory(nil, peak)
 	al := setupAccessLogic(pk)
 	gm := dynamicaccess.NewGranteeManager(al)
 	c := dynamicaccess.NewController(h, gm, al)
-	ch := prepareChunkReference()
+	eref, ref := prepareEncryptedChunkReference(ak)
 	// ech := al.EncryptRef(ch, "tag")
-	ech, err := e1.Encrypt(ch.Bytes())
-	if err != nil {
-		t.Fatalf("Encrypt() returned an error: %v", err)
-	}
 
 	ts := int64(0)
-	addr, err := c.DownloadHandler(ts, swarm.NewAddress(ech), &pk.PublicKey, "tag")
+	addr, err := c.DownloadHandler(ts, eref, &pk.PublicKey, "tag")
 	if err != nil {
 		t.Fatalf("DownloadHandler() returned an error: %v", err)
 	}
-	if addr.String() != ch.String() {
-		t.Fatalf("Decrypted chunk address: %s is not the expected: %s", addr.String(), ch.String())
+	if !addr.Equal(ref) {
+		t.Fatalf("Decrypted chunk address: %s is not the expected: %s", addr, ref)
 	}
 }
 
-func prepareChunkReference() swarm.Address {
+func prepareEncryptedChunkReference(ak []byte) (swarm.Address, swarm.Address) {
 	addr, _ := hex.DecodeString("f7b1a45b70ee91d3dbfd98a2a692387f24db7279a9c96c447409e9205cf265baef29bf6aa294264762e33f6a18318562c86383dd8bfea2cec14fae08a8039bf3")
-	return swarm.NewAddress(addr)
+	e1 := encryption.New(ak, 0, uint32(0), hashFunc)
+	ech, err := e1.Encrypt(addr)
+	if err != nil {
+		return swarm.EmptyAddress, swarm.NewAddress(addr)
+	}
+	return swarm.NewAddress(ech), swarm.NewAddress(addr)
 }
 
 func getPrivateKey() *ecdsa.PrivateKey {
