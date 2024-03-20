@@ -26,15 +26,13 @@ func (s *session) Key(publicKey *ecdsa.PublicKey, nonces [][]byte) ([][]byte, er
 		return nil, errors.New("shared secret is point at infinity")
 	}
 
-	keys := make([][]byte, len(nonces))
-	ix := 0
+	keys := make([][]byte, 0, len(nonces))
 	for _, nonce := range nonces {
 		key, err := crypto.LegacyKeccak256(append(x.Bytes(), nonce...))
 		if err != nil {
 			return nil, err
 		}
-		keys[ix] = key
-		ix++
+		keys = append(keys, key)
 	}
 
 	return keys, nil
