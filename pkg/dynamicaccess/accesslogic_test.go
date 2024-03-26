@@ -39,7 +39,7 @@ func generateFixPrivateKey(input int64) ecdsa.PrivateKey {
 	return privateKey
 }
 
-func TestGet_Success(t *testing.T) {
+func TestDecryptRef_Success(t *testing.T) {
 	id0 := generateFixPrivateKey(0)
 	s := kvsmock.New()
 	al := setupAccessLogic2()
@@ -72,8 +72,7 @@ func TestGet_Success(t *testing.T) {
 	}
 }
 
-// This test function tests those cases where different parameters are missing
-func TestGet_Error(t *testing.T) {
+func TestDecryptRef_Error(t *testing.T) {
 	id0 := generateFixPrivateKey(0)
 
 	s := kvsmock.New()
@@ -87,15 +86,10 @@ func TestGet_Error(t *testing.T) {
 
 	encryptedRef, _ := al.EncryptRef(s, &id0.PublicKey, swarm.NewAddress([]byte(expectedRef)))
 
-	r, err := al.DecryptRef(s, encryptedRef, &id0.PublicKey)
-	if err != nil {
+	r, err := al.DecryptRef(s, encryptedRef, nil)
+	if err == nil {
 		t.Logf("r: %s", r.String())
 		t.Errorf("Get should give back encrypted access key not found error!")
-	}
-
-	_, err = al.DecryptRef(s, encryptedRef, nil)
-	if err == nil {
-		t.Errorf("Get should give back error if grantee not provided!")
 	}
 }
 
