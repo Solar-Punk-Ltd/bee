@@ -60,6 +60,7 @@ func (s *keyValueStore) Save() (swarm.Address, error) {
 	if err != nil {
 		return swarm.ZeroAddress, err
 	}
+	s.putCnt = 0
 	return ref, nil
 }
 
