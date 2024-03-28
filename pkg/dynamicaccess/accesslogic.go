@@ -14,7 +14,7 @@ var hashFunc = sha3.NewLegacyKeccak256
 // Read-only interface for the ACT
 type Decryptor interface {
 	// DecryptRef will return a decrypted reference, for given encrypted reference and grantee
-	DecryptRef(storage kvs.KeyValueStore, encrypedRef swarm.Address, publisher *ecdsa.PublicKey) (swarm.Address, error)
+	DecryptRef(storage kvs.KeyValueStore, encryptedRef swarm.Address, publisher *ecdsa.PublicKey) (swarm.Address, error)
 	// Embedding the Session interface
 	Session
 }
@@ -117,7 +117,7 @@ func (al *ActLogic) getKeys(publicKey *ecdsa.PublicKey) ([][]byte, error) {
 }
 
 // DecryptRef will return a decrypted reference, for given encrypted reference and publisher
-func (al ActLogic) DecryptRef(storage kvs.KeyValueStore, encrypedRef swarm.Address, publisher *ecdsa.PublicKey) (swarm.Address, error) {
+func (al ActLogic) DecryptRef(storage kvs.KeyValueStore, encryptedRef swarm.Address, publisher *ecdsa.PublicKey) (swarm.Address, error) {
 	keys, err := al.getKeys(publisher)
 	if err != nil {
 		return swarm.EmptyAddress, err
@@ -140,7 +140,7 @@ func (al ActLogic) DecryptRef(storage kvs.KeyValueStore, encrypedRef swarm.Addre
 
 	// Decrypt reference
 	refCipher := encryption.New(accessKey, 0, uint32(0), hashFunc)
-	ref, err := refCipher.Decrypt(encrypedRef.Bytes())
+	ref, err := refCipher.Decrypt(encryptedRef.Bytes())
 	if err != nil {
 		return swarm.EmptyAddress, err
 	}
