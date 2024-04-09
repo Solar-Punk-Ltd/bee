@@ -175,7 +175,7 @@ func (m *MantarayManifest) IterateAddresses(ctx context.Context, fn swarm.Addres
 		return nil
 	}
 
-	err := m.trie.WalkNode(ctx, []byte{}, m.ls, walker, false)
+	err := m.trie.WalkNode(ctx, []byte{}, m.ls, walker)
 	if err != nil {
 		return fmt.Errorf("manifest iterate addresses: %w", err)
 	}

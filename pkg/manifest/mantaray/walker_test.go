@@ -87,7 +87,7 @@ func TestWalkNode(t *testing.T) {
 			}
 
 			// Expect no errors.
-			err := n.WalkNode(ctx, []byte{}, nil, walker, false)
+			err := n.WalkNode(ctx, []byte{}, nil, walker)
 			if err != nil {
 				t.Fatalf("no error expected, found: %s", err)
 			}
@@ -123,95 +123,7 @@ func TestWalkNode(t *testing.T) {
 			}
 
 			// Expect no errors.
-			err = n2.WalkNode(ctx, []byte{}, ls, walker, false)
-			if err != nil {
-				t.Fatalf("no error expected, found: %s", err)
-			}
-
-			if len(tc.expected) != walkedCount {
-				t.Errorf("expected %d nodes, got %d", len(tc.expected), walkedCount)
-			}
-		})
-	}
-}
-
-func TestWalkNodeInSequence(t *testing.T) {
-	t.Parallel()
-
-	for _, tc := range []struct {
-		name     string
-		toAdd    [][]byte
-		expected [][]byte
-	}{
-		{
-			name: "simple",
-			toAdd: [][]byte{
-				[]byte("111111"),
-				[]byte("111111435"),
-				[]byte("111111257"),
-				[]byte("111111256"),
-				[]byte("111111258"),
-				[]byte("111111334"),
-			},
-			expected: [][]byte{
-				[]byte(""),
-				[]byte("111111"),
-				[]byte("11111125"),
-				[]byte("111111256"),
-				[]byte("111111257"),
-				[]byte("111111258"),
-				[]byte("111111334"),
-				[]byte("111111435"),
-			},
-		},
-	} {
-		ctx := context.Background()
-		tc := tc
-
-		createTree := func(t *testing.T, toAdd [][]byte) *mantaray.Node {
-			t.Helper()
-
-			n := mantaray.New()
-
-			for i := 0; i < len(toAdd); i++ {
-				c := toAdd[i]
-				e := append(make([]byte, 32-len(c)), c...)
-				err := n.Add(ctx, c, e, nil, nil)
-				if err != nil {
-					t.Fatalf("expected no error, got %v", err)
-				}
-			}
-			return n
-		}
-
-		pathExistsInRightSequence := func(found []byte, expected [][]byte, walkedCount int) bool {
-			rightPathInSequence := false
-
-			c := expected[walkedCount]
-			if bytes.Equal(found, c) {
-				rightPathInSequence = true
-			}
-
-			return rightPathInSequence
-		}
-
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			n := createTree(t, tc.toAdd)
-
-			walkedCount := 0
-
-			walker := func(path []byte, node *mantaray.Node, err error) error {
-
-				if !pathExistsInRightSequence(path, tc.expected, walkedCount) {
-					return fmt.Errorf("walkFn returned unexpected path: %s", path)
-				}
-				walkedCount++
-				return nil
-			}
-			// Expect no errors.
-			err := n.WalkNode(ctx, []byte{}, nil, walker, true)
+			err = n2.WalkNode(ctx, []byte{}, ls, walker)
 			if err != nil {
 				t.Fatalf("no error expected, found: %s", err)
 			}
