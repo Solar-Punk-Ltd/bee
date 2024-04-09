@@ -75,9 +75,6 @@ func TestMultiNodeHistoryLookup(t *testing.T) {
 	fifthTime := time.Date(2030, time.April, 1, 0, 0, 0, 0, time.UTC).Unix()
 	h.Add(ctx, testActRef5, &fifthTime)
 
-	_, err := h.Store(ctx)
-	assert.NoError(t, err)
-
 	// latest
 	searchedTime := time.Date(1980, time.April, 1, 0, 0, 0, 0, time.UTC).Unix()
 	actRef, err := h.Lookup(ctx, searchedTime)
@@ -101,7 +98,21 @@ func TestMultiNodeHistoryLookup(t *testing.T) {
 	actRef, err = h.Lookup(ctx, searchedTime)
 	assert.NoError(t, err)
 	assert.True(t, actRef.Equal(testActRef5))
+}
 
+func TestHistoryStore(t *testing.T) {
+	storer := mockstorer.New()
+	ctx := context.Background()
+	ls := loadsave.New(storer.ChunkStore(), storer.Cache(), pipelineFactory(storer.Cache(), false))
+
+	h, _ := dynamicaccess.NewHistory(ls, nil)
+
+	testActRef1 := swarm.NewAddress([]byte("39a5ea87b141fe44aa609c3327ecd891"))
+	firstTime := time.Date(1994, time.April, 1, 0, 0, 0, 0, time.UTC).Unix()
+	h.Add(ctx, testActRef1, &firstTime)
+
+	_, err := h.Store(ctx)
+	assert.NoError(t, err)
 }
 
 func pipelineFactory(s storage.Putter, encrypt bool) func() pipeline.Interface {
