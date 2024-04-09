@@ -114,7 +114,7 @@ func (h *history) LookupNode(ctx context.Context, searchedTimestamp int64) (*man
 	}
 
 	rootNode := h.manifest.Root()
-	err := rootNode.WalkNode(ctx, []byte{}, h.ls, walker, true)
+	err := rootNode.WalkNode(ctx, []byte{}, h.ls, walker)
 
 	if err != nil && err != ErrEndIteration {
 		return nil, fmt.Errorf("history lookup node error: %w", err)
