@@ -1,7 +1,7 @@
 GO ?= go
 GOBIN ?= $$($(GO) env GOPATH)/bin
 GOLANGCI_LINT ?= $(GOBIN)/golangci-lint
-GOLANGCI_LINT_VERSION ?= v1.55.0
+GOLANGCI_LINT_VERSION ?= v1.58.1
 GOGOPROTOBUF ?= protoc-gen-gogofaster
 GOGOPROTOBUF_VERSION ?= v1.3.1
 BEEKEEPER_INSTALL_DIR ?= $(GOBIN)
@@ -87,6 +87,14 @@ format:
 .PHONY: lint
 lint: linter
 	$(GOLANGCI_LINT) run ./...
+
+.PHONY: lint-strict
+lint-strict: linter
+	$(GOLANGCI_LINT) run -c .golangci-strict.yml ./...
+
+.PHONY: lint-new
+lint-new: linter
+	$(GOLANGCI_LINT) run -c .golangci-strict.yml -n ./...
 
 .PHONY: linter
 linter:

@@ -6,7 +6,11 @@ Developers should keep their Go tooling up to date with the latest stable versio
 
 ## Static code analysis
 
-Linting is done by using https://github.com/golangci/golangci-lint with configuration defined in the root of the project and also `go vet`. Executing `make lint vet` should pass without any warnings or errors.
+Linting is done by using <https://github.com/golangci/golangci-lint> with configuration defined in the root of the project. Executing `make lint` should pass without any warnings or errors.
+
+To run the linter with a more strict set of rules, run `make lint-strict`.
+
+To run the linter only on the new or changed lines, run `make lint-new`. This uses the strict linter rules.
 
 ## Testing
 

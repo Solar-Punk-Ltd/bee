@@ -46,7 +46,7 @@
 
 Naming is difficult, but prefer the consistency of naming throughout the code base.
 If a naming pattern is already established in the codebase, follow it. If you are unsure, look in the Golang standard library for inspiration.
-It's similar to the `gofmt` tool, the formatting isn't to everyone's liking, but it is consistent.
+It's similar to the `gofumpt` tool, the formatting isn't to everyone's liking, but it is consistent.
 
 Prefer american spellings over British spellings, avoid Latin abbreviations.
 
@@ -81,7 +81,7 @@ Prefer american spellings over British spellings, avoid Latin abbreviations.
 ## Code Formatting
 
 - Keep line length, argument count and function size reasonable.
-- Run `make lint-style` command to lint the codebase using a set of style linters.
+- Run `make lint` command to lint the codebase using a set of style linters.
 - Run `make format FOLDER=pkg/mypackage` to format the code using `gci` and `gfumpt` formatters.
 
 ## Unused Names
@@ -155,6 +155,7 @@ func getID() (id int, err error) {
    return
 }
 ```
+
 ## Testing
 
 Use the Golang [testing package](https://pkg.go.dev/testing) from the standard library for writing tests.
@@ -206,6 +207,7 @@ func TestSomething(t *testing.T) {
 </tbody></table>
 
 If needed, use an underscore to disambiguate tests that are hard to name:
+
 ```go
 func TestScenario_EdgeCase(t *testing.T) {
   ...
@@ -398,7 +400,8 @@ var ErrLimitExceeded = errors.New("limit exeeded)
 
   </td></tr>
   </tbody></table>
-*Note:* in the case of serialization it might make sense to use a zero length initialized slice. For instance the JSON representation of a _nil_ slice is `null`, however a zero length allocated slice would be translated to `[]`.
+
+*Note:* in the case of serialization it might make sense to use a zero length initialized slice. For instance the JSON representation of a *nil* slice is `null`, however a zero length allocated slice would be translated to `[]`.
 
 - To check if a slice is empty, always use `len(s) == 0`. Do not check for `nil`.
 
@@ -1038,7 +1041,6 @@ type Config struct {
 
 When it is not possible to use `time.Time` in these interactions, unless an alternative is agreed upon, use `string` and format timestamps as defined in [RFC 3339]. This format is used by default by [`Time.nmarshalText`] and is available for use in `Time.Format` and `time.Parse` via [`time.RFC3339`].
 
-  [`Time.UnmarshalText`]: https://golang.org/pkg/time/#Time.UnmarshalText
   [`time.RFC3339`]: https://golang.org/pkg/time/#RFC3339
 
 Although this tends to not be a problem in practice, keep in mind that the `"time"` package does not support parsing timestamps with leap seconds ([8728]), nor does it account for leap seconds in calculations ([15190]). If you compare two instants of time, the difference will not include the leap seconds that may have occurred between those two instants.
@@ -1262,7 +1264,6 @@ However once the error is sent to another system, it should be clear the message
 
 See also [Don't just check errors, handle them gracefully].
 
-  [`"pkg/errors".Cause`]: https://godoc.org/github.com/pkg/errors#Cause
   [Don't just check errors, handle them gracefully]: https://dave.cheney.net/2016/04/27/dont-just-check-errors-handle-them-gracefully
 
 ### Handle Type Assertion Failures
@@ -1429,6 +1430,7 @@ func (s *signer) Sign(msg string) string {
   return signWithTime(msg, now)
 }
 ```
+
 </td></tr>
 <tr><td>
 
@@ -1680,6 +1682,7 @@ func (f Foo) String() string {
 
 
 ```
+
 </td></tr>
 </tbody></table>
 
