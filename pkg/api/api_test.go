@@ -108,7 +108,6 @@ type testServerOptions struct {
 	Steward            steward.Interface
 	WsHeaders          http.Header
 	Authenticator      auth.Authenticator
-	DebugAPI           bool
 	Restricted         bool
 	DirectUpload       bool
 	Probe              *api.Probe
@@ -242,12 +241,10 @@ func newTestServer(t *testing.T, o testServerOptions) (*http.Client, *websocket.
 		WsPingPeriod:       o.WsPingPeriod,
 		Restricted:         o.Restricted,
 	}, extraOpts, 1, erc20)
-	if o.DebugAPI {
-		s.MountTechnicalDebug()
-		s.MountDebug()
-	} else {
-		s.MountAPI()
-	}
+
+	s.MountTechnicalDebug()
+	s.MountDebug()
+	s.MountAPI()
 
 	if o.DirectUpload {
 		chanStore = newChanStore(o.Storer.PusherFeed())
@@ -258,21 +255,6 @@ func newTestServer(t *testing.T, o testServerOptions) (*http.Client, *websocket.
 	t.Cleanup(ts.Close)
 
 	var (
-		httpClient = &http.Client{
-			Transport: web.RoundTripperFunc(func(r *http.Request) (*http.Response, error) {
-				u, err := url.Parse(ts.URL + r.URL.String())
-				if err != nil {
-					return nil, err
-				}
-				r.URL = u
-				return ts.Client().Transport.RoundTrip(r)
-			}),
-		}
-		conn *websocket.Conn
-		err  error
-	)
-
-	if !o.DebugAPI {
 		httpClient = &http.Client{
 			Transport: web.RoundTripperFunc(func(r *http.Request) (*http.Response, error) {
 				requestURL := r.URL.String()
@@ -294,7 +276,9 @@ func newTestServer(t *testing.T, o testServerOptions) (*http.Client, *websocket.
 				return transport.RoundTrip(r)
 			}),
 		}
-	}
+		conn *websocket.Conn
+		err  error
+	)
 
 	if o.WsPath != "" {
 		u := url.URL{Scheme: "ws", Host: ts.Listener.Addr().String(), Path: o.WsPath}
