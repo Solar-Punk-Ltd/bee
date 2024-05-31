@@ -28,7 +28,6 @@ import (
 	"github.com/ethersphere/bee/v2/pkg/accounting"
 	"github.com/ethersphere/bee/v2/pkg/addressbook"
 	"github.com/ethersphere/bee/v2/pkg/api"
-	"github.com/ethersphere/bee/v2/pkg/auth"
 	"github.com/ethersphere/bee/v2/pkg/config"
 	"github.com/ethersphere/bee/v2/pkg/crypto"
 	"github.com/ethersphere/bee/v2/pkg/feeds/factory"
@@ -164,9 +163,6 @@ type Options struct {
 	MutexProfile                  bool
 	StaticNodes                   []swarm.Address
 	AllowPrivateCIDRs             bool
-	Restricted                    bool
-	TokenEncryptionKey            string
-	AdminPasswordHash             string
 	UsePostageSnapshot            bool
 	EnableStorageIncentives       bool
 	StatestoreCacheCapacity       uint64
@@ -371,15 +367,6 @@ func NewBee(
 	b.transactionCloser = tracerCloser
 	b.transactionMonitorCloser = transactionMonitor
 
-	var authenticator auth.Authenticator
-
-	if o.Restricted {
-		if authenticator, err = auth.New(o.TokenEncryptionKey, o.AdminPasswordHash, logger); err != nil {
-			return nil, fmt.Errorf("authenticator: %w", err)
-		}
-		logger.Info("starting with restricted APIs")
-	}
-
 	beeNodeMode := api.LightMode
 	if o.FullNodeMode {
 		beeNodeMode = api.FullMode
@@ -434,7 +421,6 @@ func NewBee(
 			o.CORSAllowedOrigins,
 			stamperStore,
 		)
-		apiService.Restricted = o.Restricted
 		apiService.MountTechnicalDebug()
 		apiService.SetProbe(probe)
 
@@ -1097,10 +1083,9 @@ func NewBee(
 			apiService.MustRegisterMetrics(swapService.Metrics()...)
 		}
 
-		apiService.Configure(signer, authenticator, tracer, api.Options{
+		apiService.Configure(signer, tracer, api.Options{
 			CORSAllowedOrigins: o.CORSAllowedOrigins,
 			WsPingPeriod:       60 * time.Second,
-			Restricted:         o.Restricted,
 		}, extraOpts, chainID, erc20Service)
 
 		apiService.MountDebug()
