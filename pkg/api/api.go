@@ -122,6 +122,7 @@ var (
 	errOperationSupportedOnlyInFullMode = errors.New("operation is supported only in full mode")
 	errActDownload                      = errors.New("act download failed")
 	errActUpload                        = errors.New("act upload failed")
+	errActGranteeList                   = errors.New("failed to create or update grantee list")
 )
 
 // Storer interface provides the functionality required from the local storage
