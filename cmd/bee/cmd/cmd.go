@@ -157,6 +157,11 @@ func newCommand(opts ...option) (c *command, err error) {
 		return nil, err
 	}
 
+	err = c.loadPlugins()
+	if err != nil {
+		return nil, err
+	}
+
 	return c, nil
 }
 

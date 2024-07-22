@@ -1,0 +1,15 @@
+syntax = "proto3";
+package pb;
+option go_package = ".;pb";
+
+message PluginRequest {
+    string value = 1;
+}
+
+message PluginResponse {
+    string value = 1;
+}
+
+service BeePlugin {
+    rpc Fn(PluginRequest) returns (PluginResponse);
+}

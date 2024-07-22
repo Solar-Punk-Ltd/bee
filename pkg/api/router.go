@@ -620,4 +620,10 @@ func (s *Service) mountBusinessDebug() {
 			"GET": http.HandlerFunc(s.rchash),
 		}),
 	))
+
+	handle("/plugins/test", web.ChainHandlers(
+		web.FinalHandler(jsonhttp.MethodHandler{
+			"GET": http.HandlerFunc(s.rchash),
+		}),
+	))
 }
