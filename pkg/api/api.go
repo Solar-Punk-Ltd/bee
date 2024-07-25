@@ -37,6 +37,7 @@ import (
 	"github.com/ethersphere/bee/v2/pkg/log"
 	"github.com/ethersphere/bee/v2/pkg/p2p"
 	"github.com/ethersphere/bee/v2/pkg/pingpong"
+	"github.com/ethersphere/bee/v2/pkg/plugin"
 	"github.com/ethersphere/bee/v2/pkg/postage"
 	"github.com/ethersphere/bee/v2/pkg/postage/postagecontract"
 	"github.com/ethersphere/bee/v2/pkg/pss"
@@ -213,6 +214,9 @@ type Service struct {
 	redistributionAgent *storageincentives.Agent
 
 	statusService *status.Service
+
+	pluginDir string
+	Plugins   map[string]*plugin.Plugin
 }
 
 func (s *Service) SetP2P(p2p p2p.DebugService) {
@@ -317,6 +321,10 @@ func New(
 	for _, v := range whitelistedWithdrawalAddress {
 		s.whitelistedWithdrawalAddress = append(s.whitelistedWithdrawalAddress, common.HexToAddress(v))
 	}
+
+	// TODO
+	s.pluginDir = "bee-plugins"
+	s.Plugins = map[string]*plugin.Plugin{}
 
 	return s
 }
@@ -831,3 +839,20 @@ func defaultUploadMethod(deffered *bool) bool {
 
 	return *deffered
 }
+
+// func (s *Service) initPlugins() error {
+// 	s.plugins = map[string]*plugin.Plugin{}
+// 	plugins, err := os.ReadDir("bee-plugins")
+// 	if err != nil {
+// 		return err
+// 	}
+// 	for _, p := range plugins {
+// 		plugin, err := plugin.Register(p.Name())
+// 		if err != nil {
+// 			return err
+// 		}
+// 		s.plugins[p.Name()] = plugin
+// 	}
+
+// 	return nil
+// }

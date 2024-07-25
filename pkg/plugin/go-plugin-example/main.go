@@ -14,7 +14,7 @@ func (ExamplePlugin) Fn(value string) (string, error) {
 	for i, j := 0, len(r)-1; i < j; i, j = i+1, j-1 {
 		r[i], r[j] = r[j], r[i]
 	}
-	return fmt.Sprintf("%s2", string(r)), nil
+	return fmt.Sprintf("%s", string(r)), nil
 }
 
 func main() {

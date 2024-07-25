@@ -621,15 +621,27 @@ func (s *Service) mountBusinessDebug() {
 		}),
 	))
 
-	handle("/plugins/{pluginId}/enable", web.ChainHandlers(
+	handle("/plugins", web.ChainHandlers(
+		web.FinalHandler(jsonhttp.MethodHandler{
+			"GET": http.HandlerFunc(s.pluginListHandler),
+		}),
+	))
+
+	handle("/plugins/{pluginID}/enable", web.ChainHandlers(
 		web.FinalHandler(jsonhttp.MethodHandler{
 			"GET": http.HandlerFunc(s.pluginLoadHandler),
 		}),
 	))
 
-	handle("/plugins/{pluginId}/disable", web.ChainHandlers(
+	handle("/plugins/{pluginID}/disable", web.ChainHandlers(
 		web.FinalHandler(jsonhttp.MethodHandler{
-			"GET": http.HandlerFunc(s.pluginLoadHandler),
+			"GET": http.HandlerFunc(s.pluginUnLoadHandler),
+		}),
+	))
+
+	handle("/plugins/{pluginID}/fn", web.ChainHandlers(
+		web.FinalHandler(jsonhttp.MethodHandler{
+			"POST": http.HandlerFunc(s.pluginFnHandler),
 		}),
 	))
 }
