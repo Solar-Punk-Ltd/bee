@@ -81,6 +81,7 @@ func (s *Service) pluginUnLoadHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.Plugins[paths.ID].Close()
+	delete(s.Plugins, paths.ID)
 }
 
 func (s *Service) pluginFnHandler(w http.ResponseWriter, r *http.Request) {
