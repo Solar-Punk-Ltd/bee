@@ -11,5 +11,7 @@ message PluginResponse {
 }
 
 service BeePlugin {
+    // We should define what a plugin needs to implement
+    // right now we are just passing a string and returning a string
     rpc Fn(PluginRequest) returns (PluginResponse);
 }

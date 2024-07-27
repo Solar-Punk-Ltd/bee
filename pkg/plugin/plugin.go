@@ -7,15 +7,18 @@ import (
 	"github.com/hashicorp/go-plugin"
 )
 
+// Plugin is a wrapper for the plugin client and the plugin implementation.
 type Plugin struct {
 	Client    *plugin.Client
 	BeePlugin shared.BeePlugin
 }
 
+// Close closes the plugin client.
 func (p *Plugin) Close() {
 	p.Client.Kill()
 }
 
+// Register is a wrappef function for loading a plugin.
 func Register(cmd string) (*Plugin, error) {
 	p := Plugin{}
 	p.Client = plugin.NewClient(&plugin.ClientConfig{
@@ -41,29 +44,3 @@ func Register(cmd string) (*Plugin, error) {
 	p.BeePlugin = raw.(shared.BeePlugin)
 	return &p, nil
 }
-
-// func main() {
-// 	plugins := []*Plugin{}
-// 	p, err := register("./go-plugin-example/go-plugin-example")
-// 	defer p.Client.Kill()
-// 	if err != nil {
-// 		panic(err)
-// 	}
-// 	plugins = append(plugins, p)
-
-// 	p2, err := register("./go-plugin-example/go-plugin-example2")
-// 	defer p2.Client.Kill()
-// 	if err != nil {
-// 		panic(err)
-// 	}
-// 	plugins = append(plugins, p2)
-
-// 	req := os.Args[1]
-// 	for _, pl := range plugins {
-// 		res, err := pl.BeePlugin.Fn(req)
-// 		if err != nil {
-// 			panic(err)
-// 		}
-// 		fmt.Println(res)
-// 	}
-// }
