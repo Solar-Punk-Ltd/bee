@@ -6,14 +6,17 @@ package api
 
 import (
 	"bytes"
+	"crypto/ecdsa"
 	"encoding/hex"
 	"errors"
 	"io"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/ethersphere/bee/v2/pkg/accesscontrol"
 	"github.com/ethersphere/bee/v2/pkg/cac"
+	"github.com/ethersphere/bee/v2/pkg/file/loadsave"
 	"github.com/ethersphere/bee/v2/pkg/jsonhttp"
 	"github.com/ethersphere/bee/v2/pkg/postage"
 	"github.com/ethersphere/bee/v2/pkg/soc"
@@ -172,6 +175,14 @@ func (s *Service) socUploadHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	err = putter.Put(r.Context(), sch)
+	if err != nil {
+		logger.Debug("write chunk failed", "chunk_address", sch.Address(), "error", err)
+		logger.Error(nil, "write chunk failed")
+		jsonhttp.BadRequest(ow, "chunk write error")
+		return
+	}
+
 	reference := sch.Address()
 	if headers.Act {
 		reference, err = s.actEncryptionHandler(r.Context(), w, putter, reference, headers.HistoryAddress)
@@ -190,14 +201,6 @@ func (s *Service) socUploadHandler(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
-	}
-
-	err = putter.Put(r.Context(), sch)
-	if err != nil {
-		logger.Debug("write chunk failed", "chunk_address", sch.Address(), "error", err)
-		logger.Error(nil, "write chunk failed")
-		jsonhttp.BadRequest(ow, "chunk write error")
-		return
 	}
 
 	err = putter.Done(sch.Address())
@@ -225,6 +228,9 @@ func (s *Service) socGetHandler(w http.ResponseWriter, r *http.Request) {
 
 	headers := struct {
 		OnlyRootChunk bool `map:"Swarm-Only-Root-Chunk"`
+		Timestamp      *int64           `map:"Swarm-Act-Timestamp"`
+		Publisher      *ecdsa.PublicKey `map:"Swarm-Act-Publisher"`
+		HistoryAddress *swarm.Address   `map:"Swarm-Act-History-Address"`
 	}{}
 	if response := s.mapStructure(r.Header, &headers); response != nil {
 		response("invalid header params", logger, w)
@@ -238,8 +244,37 @@ func (s *Service) socGetHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	decryptedAddress := address
+	if headers.Publisher != nil && headers.HistoryAddress != nil {
+		timestamp := time.Now().Unix()
+		if headers.Timestamp != nil {
+			timestamp = *headers.Timestamp
+		}
+
+		ctx := r.Context()
+		ls := loadsave.NewReadonly(s.storer.Download(true))
+		decryptedAddress, err = s.accesscontrol.DownloadHandler(ctx, ls, address, headers.Publisher, *headers.HistoryAddress, timestamp)
+		if err != nil {
+			logger.Debug("access control download failed", "error", err)
+			logger.Error(nil, "access control download failed")
+			switch {
+			case errors.Is(err, accesscontrol.ErrNotFound):
+				jsonhttp.NotFound(w, "act or history entry not found")
+			case errors.Is(err, accesscontrol.ErrInvalidTimestamp):
+				jsonhttp.BadRequest(w, "invalid timestamp")
+			case errors.Is(err, accesscontrol.ErrInvalidPublicKey) || errors.Is(err, accesscontrol.ErrSecretKeyInfinity):
+				jsonhttp.BadRequest(w, "invalid public key")
+			case errors.Is(err, accesscontrol.ErrUnexpectedType):
+				jsonhttp.BadRequest(w, "failed to create history")
+			default:
+				jsonhttp.InternalServerError(w, errActDownload)
+			}
+			return
+		}
+	}
+
 	getter := s.storer.Download(true)
-	sch, err := getter.Get(r.Context(), address)
+	sch, err := getter.Get(r.Context(), decryptedAddress)
 	if err != nil {
 		logger.Error(err, "soc retrieval has been failed")
 		jsonhttp.NotFound(w, "requested chunk cannot be retrieved")
