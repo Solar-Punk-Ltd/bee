@@ -6,7 +6,6 @@ package api
 
 import (
 	"bytes"
-	"crypto/ecdsa"
 	"encoding/hex"
 	"errors"
 	"io"
@@ -226,9 +225,6 @@ func (s *Service) socGetHandler(w http.ResponseWriter, r *http.Request) {
 
 	headers := struct {
 		OnlyRootChunk bool `map:"Swarm-Only-Root-Chunk"`
-		Timestamp      *int64           `map:"Swarm-Act-Timestamp"`
-		Publisher      *ecdsa.PublicKey `map:"Swarm-Act-Publisher"`
-		HistoryAddress *swarm.Address   `map:"Swarm-Act-History-Address"`
 	}{}
 	if response := s.mapStructure(r.Header, &headers); response != nil {
 		response("invalid header params", logger, w)
