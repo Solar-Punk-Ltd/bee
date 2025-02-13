@@ -12,11 +12,9 @@ import (
 	"io"
 	"net/http"
 	"strconv"
-	"time"
 
 	"github.com/ethersphere/bee/v2/pkg/accesscontrol"
 	"github.com/ethersphere/bee/v2/pkg/cac"
-	"github.com/ethersphere/bee/v2/pkg/file/loadsave"
 	"github.com/ethersphere/bee/v2/pkg/jsonhttp"
 	"github.com/ethersphere/bee/v2/pkg/postage"
 	"github.com/ethersphere/bee/v2/pkg/soc"
@@ -244,37 +242,8 @@ func (s *Service) socGetHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	decryptedAddress := address
-	if headers.Publisher != nil && headers.HistoryAddress != nil {
-		timestamp := time.Now().Unix()
-		if headers.Timestamp != nil {
-			timestamp = *headers.Timestamp
-		}
-
-		ctx := r.Context()
-		ls := loadsave.NewReadonly(s.storer.Download(true))
-		decryptedAddress, err = s.accesscontrol.DownloadHandler(ctx, ls, address, headers.Publisher, *headers.HistoryAddress, timestamp)
-		if err != nil {
-			logger.Debug("access control download failed", "error", err)
-			logger.Error(nil, "access control download failed")
-			switch {
-			case errors.Is(err, accesscontrol.ErrNotFound):
-				jsonhttp.NotFound(w, "act or history entry not found")
-			case errors.Is(err, accesscontrol.ErrInvalidTimestamp):
-				jsonhttp.BadRequest(w, "invalid timestamp")
-			case errors.Is(err, accesscontrol.ErrInvalidPublicKey) || errors.Is(err, accesscontrol.ErrSecretKeyInfinity):
-				jsonhttp.BadRequest(w, "invalid public key")
-			case errors.Is(err, accesscontrol.ErrUnexpectedType):
-				jsonhttp.BadRequest(w, "failed to create history")
-			default:
-				jsonhttp.InternalServerError(w, errActDownload)
-			}
-			return
-		}
-	}
-
 	getter := s.storer.Download(true)
-	sch, err := getter.Get(r.Context(), decryptedAddress)
+	sch, err := getter.Get(r.Context(), address)
 	if err != nil {
 		logger.Error(err, "soc retrieval has been failed")
 		jsonhttp.NotFound(w, "requested chunk cannot be retrieved")
