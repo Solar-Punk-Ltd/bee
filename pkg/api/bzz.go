@@ -6,6 +6,7 @@ package api
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -22,6 +23,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethersphere/bee/v2/pkg/accesscontrol"
+	"github.com/ethersphere/bee/v2/pkg/crypto"
 	"github.com/ethersphere/bee/v2/pkg/feeds"
 	"github.com/ethersphere/bee/v2/pkg/file"
 	"github.com/ethersphere/bee/v2/pkg/file/joiner"
@@ -267,8 +269,9 @@ func (s *Service) fileUploadHandler(
 	logger.Debug("store", "manifest_reference", manifestReference)
 
 	reference := manifestReference
+	historyReference := swarm.ZeroAddress
 	if act {
-		reference, err = s.actEncryptionHandler(r.Context(), w, putter, reference, historyAddress)
+		reference, historyReference, err = s.actEncryptionHandler(r.Context(), putter, reference, historyAddress)
 		if err != nil {
 			logger.Debug("access control upload failed", "error", err)
 			logger.Error(nil, "access control upload failed")
@@ -303,6 +306,10 @@ func (s *Service) fileUploadHandler(
 	}
 	w.Header().Set(ETagHeader, fmt.Sprintf("%q", reference.String()))
 	w.Header().Set(AccessControlExposeHeaders, SwarmTagHeader)
+	if act {
+		w.Header().Set(SwarmActHistoryAddressHeader, historyReference.String())
+		w.Header().Add(AccessControlExposeHeaders, SwarmActHistoryAddressHeader)
+	}
 
 	jsonhttp.Created(w, bzzUploadResponse{
 		Reference: reference,
@@ -569,6 +576,9 @@ func (s *Service) downloadHandler(logger log.Logger, w http.ResponseWriter, r *h
 		ChunkRetrievalTimeout *string           `map:"Swarm-Chunk-Retrieval-Timeout"`
 		LookaheadBufferSize   *int              `map:"Swarm-Lookahead-Buffer-Size"`
 		Cache                 *bool             `map:"Swarm-Cache"`
+		Timestamp             *int64            `map:"Swarm-Act-Timestamp"`
+		Publisher             *ecdsa.PublicKey  `map:"Swarm-Act-Publisher"`
+		HistoryAddress        *swarm.Address    `map:"Swarm-Act-History-Address"`
 	}{}
 
 	if response := s.mapStructure(r.Header, &headers); response != nil {
@@ -625,6 +635,21 @@ func (s *Service) downloadHandler(logger log.Logger, w http.ResponseWriter, r *h
 	}
 	w.Header().Set(ContentLengthHeader, strconv.FormatInt(l, 10))
 	w.Header().Add(AccessControlExposeHeaders, ContentDispositionHeader)
+	if headers.HistoryAddress != nil {
+		w.Header().Set(SwarmActHistoryAddressHeader, fmt.Sprint((*headers.HistoryAddress).String()))
+		w.Header().Add(AccessControlExposeHeaders, SwarmActHistoryAddressHeader)
+		logger.Info("bagoy bzz get headers.HistoryAddress: ", "HistoryAddress", (*headers.HistoryAddress).String())
+	}
+	if headers.Publisher != nil {
+		w.Header().Set(SwarmActPublisherHeader, fmt.Sprint(hex.EncodeToString(crypto.EncodeSecp256k1PublicKey(headers.Publisher))))
+		w.Header().Add(AccessControlExposeHeaders, SwarmActPublisherHeader)
+		logger.Info("bagoy bzz get headers.Publisher: ", "publisher", hex.EncodeToString(crypto.EncodeSecp256k1PublicKey(headers.Publisher)))
+	}
+	if headers.Timestamp != nil {
+		w.Header().Set(SwarmActTimestampHeader, fmt.Sprint((*headers.Timestamp)))
+		w.Header().Add(AccessControlExposeHeaders, SwarmActTimestampHeader)
+		logger.Info("bagoy bzz get headers.Timestamp: ", "Timestamp", (*headers.Timestamp))
+	}
 
 	if headersOnly {
 		w.WriteHeader(http.StatusOK)

@@ -6,6 +6,8 @@ package api
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/ethersphere/bee/v2/pkg/accesscontrol"
 	"github.com/ethersphere/bee/v2/pkg/cac"
+	"github.com/ethersphere/bee/v2/pkg/crypto"
 	"github.com/ethersphere/bee/v2/pkg/soc"
 	"github.com/ethersphere/bee/v2/pkg/storer"
 
@@ -185,8 +188,9 @@ func (s *Service) chunkUploadHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	reference := chunk.Address()
+	historyReference := swarm.ZeroAddress
 	if headers.Act {
-		reference, err = s.actEncryptionHandler(r.Context(), w, putter, reference, headers.HistoryAddress)
+		reference, historyReference, err = s.actEncryptionHandler(r.Context(), putter, reference, headers.HistoryAddress)
 		if err != nil {
 			logger.Debug("access control upload failed", "error", err)
 			logger.Error(nil, "access control upload failed")
@@ -217,6 +221,10 @@ func (s *Service) chunkUploadHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set(AccessControlExposeHeaders, SwarmTagHeader)
+	if headers.Act {
+		w.Header().Set(SwarmActHistoryAddressHeader, historyReference.String())
+		w.Header().Add(AccessControlExposeHeaders, SwarmActHistoryAddressHeader)
+	}
 	jsonhttp.Created(w, chunkAddressResponse{Reference: reference})
 }
 
@@ -225,7 +233,10 @@ func (s *Service) chunkGetHandler(w http.ResponseWriter, r *http.Request) {
 	loggerV1 := logger.V(1).Build()
 
 	headers := struct {
-		Cache *bool `map:"Swarm-Cache"`
+		Cache          *bool            `map:"Swarm-Cache"`
+		Timestamp      *int64           `map:"Swarm-Act-Timestamp"`
+		Publisher      *ecdsa.PublicKey `map:"Swarm-Act-Publisher"`
+		HistoryAddress *swarm.Address   `map:"Swarm-Act-History-Address"`
 	}{}
 	if response := s.mapStructure(r.Header, &headers); response != nil {
 		response("invalid header params", logger, w)
@@ -262,7 +273,24 @@ func (s *Service) chunkGetHandler(w http.ResponseWriter, r *http.Request) {
 		jsonhttp.InternalServerError(w, "read chunk failed")
 		return
 	}
+
 	w.Header().Set(ContentTypeHeader, "binary/octet-stream")
 	w.Header().Set(ContentLengthHeader, strconv.FormatInt(int64(len(chunk.Data())), 10))
+	if headers.HistoryAddress != nil {
+		w.Header().Set(SwarmActHistoryAddressHeader, fmt.Sprint((*headers.HistoryAddress).String()))
+		w.Header().Add(AccessControlExposeHeaders, SwarmActHistoryAddressHeader)
+		logger.Info("bagoy chunk get headers.HistoryAddress: ", "HistoryAddress", (*headers.HistoryAddress).String())
+	}
+	if headers.Publisher != nil {
+		w.Header().Set(SwarmActPublisherHeader, fmt.Sprint(hex.EncodeToString(crypto.EncodeSecp256k1PublicKey(headers.Publisher))))
+		w.Header().Add(AccessControlExposeHeaders, SwarmActPublisherHeader)
+		logger.Info("bagoy chunk get headers.Publisher: ", "publisher", hex.EncodeToString(crypto.EncodeSecp256k1PublicKey(headers.Publisher)))
+	}
+	if headers.Timestamp != nil {
+		w.Header().Set(SwarmActTimestampHeader, fmt.Sprint((*headers.Timestamp)))
+		w.Header().Add(AccessControlExposeHeaders, SwarmActTimestampHeader)
+		logger.Info("bagoy chunk get headers.Timestamp: ", "Timestamp", (*headers.Timestamp))
+	}
+
 	_, _ = io.Copy(w, bytes.NewReader(chunk.Data()))
 }
