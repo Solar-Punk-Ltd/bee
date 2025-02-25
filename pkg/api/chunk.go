@@ -96,8 +96,8 @@ func (s *Service) chunkUploadHandler(w http.ResponseWriter, r *http.Request) {
 	} else {
 		putter, err = s.newStamperPutter(r.Context(), putterOptions{
 			BatchID:  headers.BatchID,
-			TagID:    tag,
-			Deferred: deferred,
+			TagID:    1,
+			Deferred: true,
 		})
 	}
 	if err != nil {
