@@ -1,4 +1,4 @@
-module beehack
+module github.com/ethersphere/bee/v2
 
 go 1.23
 
@@ -10,7 +10,6 @@ require (
 	github.com/btcsuite/btcd/btcec/v2 v2.3.2
 	github.com/coreos/go-semver v0.3.0
 	github.com/ethereum/go-ethereum v1.14.3
-	github.com/ethersphere/bee/v2 v2.5.0
 	github.com/ethersphere/go-price-oracle-abi v0.2.0
 	github.com/ethersphere/go-storage-incentives-abi v0.9.2
 	github.com/ethersphere/go-sw3-abi v0.6.5
@@ -57,6 +56,8 @@ require (
 	resenje.org/singleflight v0.4.0
 	resenje.org/web v0.4.3
 )
+
+require github.com/codahale/hdrhistogram v0.0.0-00010101000000-000000000000 // indirect
 
 require (
 	github.com/Microsoft/go-winio v0.6.1 // indirect
