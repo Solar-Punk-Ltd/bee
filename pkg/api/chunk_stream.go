@@ -54,13 +54,13 @@ func (s *Service) chunkUploadStreamHandler(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	}
-
+	tag = 1
 	// if tag not specified use direct upload
 	// Using context.Background here because the putter's lifetime extends beyond that of the HTTP request.
 	putter, err := s.newStamperPutter(context.Background(), putterOptions{
 		BatchID:  headers.BatchID,
 		TagID:    tag,
-		Deferred: tag != 0,
+		Deferred: true,
 	})
 	if err != nil {
 		logger.Debug("get putter failed", "error", err)

@@ -72,6 +72,7 @@ func (s *Service) chunkUploadHandler(w http.ResponseWriter, r *http.Request) {
 	// create new session for single chunk uploads. So if the chunk upload is not
 	// part of a session already, then we directly push the chunk. This way we dont
 	// need to go through the UploadStore.
+	tag = 1
 	deferred := tag != 0
 
 	var putter storer.PutterSession
