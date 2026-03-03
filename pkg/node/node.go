@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -62,6 +63,7 @@ import (
 	"github.com/ethersphere/bee/v2/pkg/stabilization"
 	"github.com/ethersphere/bee/v2/pkg/status"
 	"github.com/ethersphere/bee/v2/pkg/steward"
+	"github.com/ethersphere/bee/v2/pkg/storage"
 	"github.com/ethersphere/bee/v2/pkg/storageincentives"
 	"github.com/ethersphere/bee/v2/pkg/storageincentives/redistribution"
 	"github.com/ethersphere/bee/v2/pkg/storageincentives/staking"
@@ -80,6 +82,7 @@ import (
 	ma "github.com/multiformats/go-multiaddr"
 	"github.com/prometheus/client_golang/prometheus"
 	"golang.org/x/crypto/sha3"
+	"golang.org/x/net/idna"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -106,7 +109,6 @@ type Bee struct {
 	pullSyncCloser           io.Closer
 	pssCloser                io.Closer
 	gsocCloser               io.Closer
-	ethClientCloser          io.Closer
 	transactionMonitorCloser io.Closer
 	transactionCloser        io.Closer
 	listenerCloser           io.Closer
@@ -116,23 +118,27 @@ type Bee struct {
 	saludCloser              io.Closer
 	storageIncetivesCloser   io.Closer
 	pushSyncCloser           io.Closer
-	retrievalCloser          io.Closer
 	shutdownInProgress       bool
 	shutdownMutex            sync.Mutex
 	syncingStopped           *syncutil.Signaler
 	accesscontrolCloser      io.Closer
+	ethClientCloser          func()
 }
 
 type Options struct {
 	Addr                          string
 	AllowPrivateCIDRs             bool
 	APIAddr                       string
+	EnableWSS                     bool
+	WSSAddr                       string
+	AutoTLSStorageDir             string
 	BlockchainRpcEndpoint         string
 	BlockProfile                  bool
 	BlockTime                     time.Duration
 	BootnodeMode                  bool
 	Bootnodes                     []string
 	CacheCapacity                 uint64
+	AutoTLSCAEndpoint             string
 	ChainID                       int64
 	ChequebookEnable              bool
 	CORSAllowedOrigins            []string
@@ -143,11 +149,15 @@ type Options struct {
 	DBWriteBufferSize             uint64
 	EnableStorageIncentives       bool
 	EnableWS                      bool
+	AutoTLSDomain                 string
+	AutoTLSRegistrationEndpoint   string
 	FullNodeMode                  bool
 	Logger                        log.Logger
+	MinimumGasTipCap              uint64
 	MinimumStorageRadius          uint
 	MutexProfile                  bool
 	NATAddr                       string
+	NATWSSAddr                    string
 	NeighborhoodSuggester         string
 	PaymentEarly                  int64
 	PaymentThreshold              string
@@ -172,7 +182,6 @@ type Options struct {
 	TracingEndpoint               string
 	TracingServiceName            string
 	TrxDebugMode                  bool
-	UsePostageSnapshot            bool
 	WarmupTime                    time.Duration
 	WelcomeMessage                string
 	WhitelistedWithdrawalAddress  []string
@@ -206,6 +215,12 @@ func NewBee(
 	session accesscontrol.Session,
 	o *Options,
 ) (b *Bee, err error) {
+	// start time for node warmup duration measurement
+	warmupStartTime := time.Now()
+	var pullSyncStartTime time.Time
+
+	nodeMetrics := newMetrics()
+
 	tracer, tracerCloser, err := tracing.NewTracer(&tracing.Options{
 		Enabled:     o.TracingEnabled,
 		Endpoint:    o.TracingEndpoint,
@@ -213,6 +228,14 @@ func NewBee(
 	})
 	if err != nil {
 		return nil, fmt.Errorf("tracer: %w", err)
+	}
+
+	if err := validatePublicAddress(o.NATAddr); err != nil {
+		return nil, fmt.Errorf("invalid NAT address %s: %w", o.NATAddr, err)
+	}
+
+	if err := validatePublicAddress(o.NATWSSAddr); err != nil {
+		return nil, fmt.Errorf("invalid NAT WSS address %s: %w", o.NATWSSAddr, err)
 	}
 
 	ctx, ctxCancel := context.WithCancel(ctx)
@@ -351,16 +374,10 @@ func NewBee(
 	}
 
 	var (
-		chainBackend       transaction.Backend
-		overlayEthAddress  common.Address
-		chainID            int64
-		transactionService transaction.Service
-		transactionMonitor transaction.Monitor
-		chequebookFactory  chequebook.Factory
-		chequebookService  chequebook.Service = new(noOpChequebookService)
-		chequeStore        chequebook.ChequeStore
-		cashoutService     chequebook.CashoutService
-		erc20Service       erc20.Service
+		chequebookService chequebook.Service = new(noOpChequebookService)
+		chequeStore       chequebook.ChequeStore
+		cashoutService    chequebook.CashoutService
+		erc20Service      erc20.Service
 	)
 
 	chainEnabled := isChainEnabled(o, o.BlockchainRpcEndpoint, logger)
@@ -382,7 +399,7 @@ func NewBee(
 		}
 	}
 
-	chainBackend, overlayEthAddress, chainID, transactionMonitor, transactionService, err = InitChain(
+	chainBackend, overlayEthAddress, chainID, transactionMonitor, transactionService, err := InitChain(
 		ctx,
 		logger,
 		stateStore,
@@ -390,18 +407,16 @@ func NewBee(
 		o.ChainID,
 		signer,
 		o.BlockTime,
-		chainEnabled)
+		chainEnabled,
+		o.MinimumGasTipCap,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("init chain: %w", err)
 	}
-	b.ethClientCloser = chainBackend
 
-	logger.Info("using chain with network network", "chain_id", chainID, "network_id", networkID)
+	logger.Info("using chain with network", "chain_id", chainID, "network_id", networkID)
 
-	if o.ChainID != -1 && o.ChainID != chainID {
-		return nil, fmt.Errorf("connected to wrong blockchain network; network chainID %d; configured chainID %d", chainID, o.ChainID)
-	}
-
+	b.ethClientCloser = chainBackend.Close
 	b.transactionCloser = tracerCloser
 	b.transactionMonitorCloser = transactionMonitor
 
@@ -439,7 +454,7 @@ func NewBee(
 			runtime.SetBlockProfileRate(1)
 		}
 
-		apiListener, err := net.Listen("tcp", o.APIAddr)
+		apiListener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", o.APIAddr)
 		if err != nil {
 			return nil, fmt.Errorf("api listener: %w", err)
 		}
@@ -485,22 +500,24 @@ func NewBee(
 		b.apiCloser = apiServer
 	}
 
-	// Sync the with the given Ethereum backend:
-	isSynced, _, err := transaction.IsSynced(ctx, chainBackend, maxDelay)
-	if err != nil {
-		return nil, fmt.Errorf("is synced: %w", err)
-	}
-	if !isSynced {
-		logger.Info("waiting to sync with the blockchain backend")
-
-		err := transaction.WaitSynced(ctx, logger, chainBackend, maxDelay)
+	if chainEnabled {
+		// Sync the with the given Ethereum backend:
+		isSynced, _, err := transaction.IsSynced(ctx, chainBackend, maxDelay)
 		if err != nil {
-			return nil, fmt.Errorf("waiting backend sync: %w", err)
+			return nil, fmt.Errorf("is synced: %w", err)
+		}
+		if !isSynced {
+			logger.Info("waiting to sync with the blockchain backend")
+
+			err := transaction.WaitSynced(ctx, logger, chainBackend, maxDelay)
+			if err != nil {
+				return nil, fmt.Errorf("waiting backend sync: %w", err)
+			}
 		}
 	}
 
 	if o.SwapEnable {
-		chequebookFactory, err = InitChequebookFactory(logger, chainBackend, chainID, transactionService, o.SwapFactoryAddress)
+		chequebookFactory, err := InitChequebookFactory(logger, chainBackend, chainID, transactionService, o.SwapFactoryAddress)
 		if err != nil {
 			return nil, fmt.Errorf("init chequebook factory: %w", err)
 		}
@@ -595,40 +612,20 @@ func NewBee(
 		logger.Info("node warmup check initiated. monitoring activity rate to determine readiness.", "startTime", t)
 	}
 
-	detector.OnStabilized = func(t time.Time, totalCount int) {
-		logger.Info("node warmup complete. system is considered stable and ready.", "stabilizationTime", t, "totalMonitoredEvents", totalCount)
+	warmupMeasurement := func(t time.Time, totalCount int) {
+		warmupDuration := t.Sub(warmupStartTime).Seconds()
+		logger.Info("node warmup complete. system is considered stable and ready.",
+			"stabilizationTime", t,
+			"totalMonitoredEvents", totalCount,
+			"warmupDurationSeconds", warmupDuration)
+
+		nodeMetrics.WarmupDuration.Observe(warmupDuration)
+		pullSyncStartTime = t
 	}
+	detector.OnStabilized = warmupMeasurement
 
 	detector.OnPeriodComplete = func(t time.Time, periodCount int, stDev float64) {
 		logger.Debug("node warmup check: period complete.", "periodEndTime", t, "eventsInPeriod", periodCount, "rateStdDev", stDev)
-	}
-
-	var initBatchState *postage.ChainSnapshot
-	// Bootstrap node with postage snapshot only if it is running on mainnet, is a fresh
-	// install or explicitly asked by user to resync
-	if networkID == mainnetNetworkID && o.UsePostageSnapshot && (!batchStoreExists || o.Resync) {
-		start := time.Now()
-		logger.Info("cold postage start detected. fetching postage stamp snapshot from swarm")
-		initBatchState, err = bootstrapNode(
-			ctx,
-			addr,
-			swarmAddress,
-			nonce,
-			addressbook,
-			bootnodes,
-			lightNodes,
-			stateStore,
-			signer,
-			networkID,
-			log.Noop,
-			libp2pPrivateKey,
-			detector,
-			o,
-		)
-		logger.Info("bootstrapper created", "elapsed", time.Since(start))
-		if err != nil {
-			logger.Error(err, "bootstrapper failed to fetch batch state")
-		}
 	}
 
 	var registry *prometheus.Registry
@@ -638,14 +635,21 @@ func NewBee(
 	}
 
 	p2ps, err := libp2p.New(ctx, signer, networkID, swarmAddress, addr, addressbook, stateStore, lightNodes, logger, tracer, libp2p.Options{
-		PrivateKey:      libp2pPrivateKey,
-		NATAddr:         o.NATAddr,
-		EnableWS:        o.EnableWS,
-		WelcomeMessage:  o.WelcomeMessage,
-		FullNode:        o.FullNodeMode,
-		Nonce:           nonce,
-		ValidateOverlay: chainEnabled,
-		Registry:        registry,
+		PrivateKey:                  libp2pPrivateKey,
+		NATAddr:                     o.NATAddr,
+		NATWSSAddr:                  o.NATWSSAddr,
+		EnableWS:                    o.EnableWS,
+		EnableWSS:                   o.EnableWSS,
+		WSSAddr:                     o.WSSAddr,
+		AutoTLSStorageDir:           o.AutoTLSStorageDir,
+		AutoTLSDomain:               o.AutoTLSDomain,
+		AutoTLSRegistrationEndpoint: o.AutoTLSRegistrationEndpoint,
+		AutoTLSCAEndpoint:           o.AutoTLSCAEndpoint,
+		WelcomeMessage:              o.WelcomeMessage,
+		FullNode:                    o.FullNodeMode,
+		Nonce:                       nonce,
+		ValidateOverlay:             chainEnabled,
+		Registry:                    registry,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("p2p service: %w", err)
@@ -718,7 +722,7 @@ func NewBee(
 		return nil, fmt.Errorf("pingpong service: %w", err)
 	}
 
-	hive := hive.New(p2ps, addressbook, networkID, o.BootnodeMode, o.AllowPrivateCIDRs, logger)
+	hive := hive.New(p2ps, addressbook, networkID, o.BootnodeMode, o.AllowPrivateCIDRs, swarmAddress, logger)
 
 	if err = p2ps.AddProtocol(hive.Protocol()); err != nil {
 		return nil, fmt.Errorf("hive service: %w", err)
@@ -803,7 +807,7 @@ func NewBee(
 		}
 	)
 
-	if !o.SkipPostageSnapshot && !batchStoreExists && (networkID == mainnetNetworkID) {
+	if !o.SkipPostageSnapshot && !batchStoreExists && (networkID == mainnetNetworkID) && beeNodeMode != api.UltraLightMode {
 		chainBackend := NewSnapshotLogFilterer(logger, archiveSnapshotGetter{})
 
 		snapshotEventListener := listener.New(b.syncingStopped, logger, chainBackend, postageStampContractAddress, postageStampContractABI, o.BlockTime, postageSyncingStallingTimeout, postageSyncingBackoffTimeout)
@@ -812,7 +816,7 @@ func NewBee(
 		if err != nil {
 			logger.Error(err, "failed to initialize batch service from snapshot, continuing outside snapshot block...")
 		} else {
-			err = snapshotBatchSvc.Start(ctx, postageSyncStart, initBatchState)
+			err = snapshotBatchSvc.Start(ctx, postageSyncStart)
 			syncStatus.Store(true)
 			if err != nil {
 				syncErr.Store(err)
@@ -840,7 +844,7 @@ func NewBee(
 		}
 
 		if o.FullNodeMode {
-			err = batchSvc.Start(ctx, postageSyncStart, initBatchState)
+			err = batchSvc.Start(ctx, postageSyncStart)
 			syncStatus.Store(true)
 			if err != nil {
 				syncErr.Store(err)
@@ -849,7 +853,7 @@ func NewBee(
 		} else {
 			go func() {
 				logger.Info("started postage contract data sync in the background...")
-				err := batchSvc.Start(ctx, postageSyncStart, initBatchState)
+				err := batchSvc.Start(ctx, postageSyncStart)
 				syncStatus.Store(true)
 				if err != nil {
 					syncErr.Store(err)
@@ -975,7 +979,7 @@ func NewBee(
 		return nil, fmt.Errorf("status service: %w", err)
 	}
 
-	saludService := salud.New(nodeStatus, kad, localStore, logger, detector, api.FullMode.String(), salud.DefaultMinPeersPerBin, salud.DefaultDurPercentile, salud.DefaultConnsPercentile)
+	saludService := salud.New(nodeStatus, kad, localStore, logger, detector, api.FullMode.String(), salud.DefaultDurPercentile, salud.DefaultConnsPercentile)
 	b.saludCloser = saludService
 
 	rC, unsub := saludService.SubscribeNetworkStorageRadius()
@@ -1130,6 +1134,37 @@ func NewBee(
 		localStore.StartReserveWorker(ctx, pullerService, waitNetworkRFunc)
 		nodeStatus.SetSync(pullerService)
 
+		// measure full sync duration
+		detector.OnStabilized = func(t time.Time, totalCount int) {
+			warmupMeasurement(t, totalCount)
+
+			reserveThreshold := reserveCapacity >> 1
+			isFullySynced := func() bool {
+				return pullerService.SyncRate() == 0 && saludService.IsHealthy() && localStore.ReserveSize() >= reserveThreshold
+			}
+
+			syncCheckTicker := time.NewTicker(2 * time.Second)
+			go func() {
+				defer syncCheckTicker.Stop()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-syncCheckTicker.C:
+						synced := isFullySynced()
+						logger.Debug("sync status check", "synced", synced, "reserveSize", localStore.ReserveSize(), "syncRate", pullerService.SyncRate())
+						if synced {
+							fullSyncTime := pullSyncStartTime.Sub(t)
+							logger.Info("full sync done", "duration", fullSyncTime)
+							nodeMetrics.FullSyncDuration.Observe(fullSyncTime.Minutes())
+							syncCheckTicker.Stop()
+							return
+						}
+					}
+				}
+			}()
+		}
+
 		if o.EnableStorageIncentives {
 
 			redistributionContractAddress := chainCfg.RedistributionAddress
@@ -1143,9 +1178,9 @@ func NewBee(
 			redistributionContract := redistribution.New(swarmAddress, overlayEthAddress, logger, transactionService, redistributionContractAddress, abiutil.MustParseABI(chainCfg.RedistributionABI), o.TrxDebugMode)
 
 			isFullySynced := func() bool {
-				reserveTreshold := reserveCapacity * 5 / 10
+				reserveThreshold := reserveCapacity * 5 / 10
 				logger.Debug("Sync status check evaluated", "stabilized", detector.IsStabilized())
-				return localStore.ReserveSize() >= reserveTreshold && pullerService.SyncRate() == 0 && detector.IsStabilized()
+				return localStore.ReserveSize() >= reserveThreshold && pullerService.SyncRate() == 0 && detector.IsStabilized()
 			}
 
 			agent, err = storageincentives.New(
@@ -1217,6 +1252,7 @@ func NewBee(
 		apiService.MustRegisterMetrics(kad.Metrics()...)
 		apiService.MustRegisterMetrics(saludService.Metrics()...)
 		apiService.MustRegisterMetrics(stateStoreMetrics.Metrics()...)
+		apiService.MustRegisterMetrics(getMetrics(nodeMetrics)...)
 
 		if pullerService != nil {
 			apiService.MustRegisterMetrics(pullerService.Metrics()...)
@@ -1384,7 +1420,10 @@ func (b *Bee) Shutdown() error {
 
 	wg.Wait()
 
-	tryClose(b.ethClientCloser, "eth client")
+	if b.ethClientCloser != nil {
+		b.ethClientCloser()
+	}
+
 	tryClose(b.accesscontrolCloser, "accesscontrol")
 	tryClose(b.tracerCloser, "tracer")
 	tryClose(b.topologyCloser, "topology driver")
@@ -1403,11 +1442,71 @@ func isChainEnabled(o *Options, swapEndpoint string, logger log.Logger) bool {
 	chainDisabled := swapEndpoint == ""
 	lightMode := !o.FullNodeMode
 
-	if lightMode && chainDisabled { // ultra light mode is LightNode mode with chain disabled
-		logger.Info("starting with a disabled chain backend")
+	if lightMode && chainDisabled {
+		logger.Info("chain backend disabled - starting in ultra-light mode",
+			"full_node_mode", o.FullNodeMode,
+			"blockchain-rpc-endpoint", swapEndpoint)
 		return false
 	}
 
-	logger.Info("starting with an enabled chain backend")
+	logger.Info("chain backend enabled - blockchain functionality available",
+		"full_node_mode", o.FullNodeMode,
+		"blockchain-rpc-endpoint", swapEndpoint)
 	return true // all other modes operate require chain enabled
+}
+
+func validatePublicAddress(addr string) error {
+	if addr == "" {
+		return nil
+	}
+
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("%w", err)
+	}
+	if host == "" {
+		return errors.New("host is empty")
+	}
+	if port == "" {
+		return errors.New("port is empty")
+	}
+	if _, err := strconv.ParseUint(port, 10, 16); err != nil {
+		return fmt.Errorf("port is not a valid number: %w", err)
+	}
+	if host == "localhost" {
+		return errors.New("localhost is not a valid address")
+	}
+
+	ip := net.ParseIP(host)
+	if ip != nil {
+		if ip.IsLoopback() {
+			return errors.New("loopback address is not a valid address")
+		}
+		if ip.IsPrivate() {
+			return errors.New("private address is not a valid address")
+		}
+		return nil
+	}
+
+	idnaValidator := idna.New(
+		idna.ValidateLabels(true),
+		idna.VerifyDNSLength(true),
+		idna.StrictDomainName(true),
+		idna.CheckHyphens(true),
+	)
+	if _, err := idnaValidator.ToASCII(host); err != nil {
+		return fmt.Errorf("invalid hostname: %w", err)
+	}
+
+	return nil
+}
+
+func batchStoreExists(s storage.StateStorer) (bool, error) {
+	hasOne := false
+	err := s.Iterate("batchstore_", func(key, value []byte) (stop bool, err error) {
+		hasOne = true
+		return true, err
+	})
+
+	return hasOne, err
 }

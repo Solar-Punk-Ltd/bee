@@ -12,6 +12,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/ethersphere/bee/v2/pkg/p2p"
@@ -785,6 +786,50 @@ func TestRecorder_ping(t *testing.T) {
 	}
 }
 
+func TestRecorder_WithMessageLatency(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		latency := 200 * time.Millisecond
+		recorder := streamtest.New(
+			streamtest.WithMessageLatency(latency),
+			streamtest.WithProtocols(
+				newTestProtocol(func(_ context.Context, peer p2p.Peer, stream p2p.Stream) error {
+					rw := bufio.NewReadWriter(bufio.NewReader(stream), bufio.NewWriter(stream))
+					if _, err := rw.ReadString('\n'); err != nil {
+						return err
+					}
+					if _, err := rw.WriteString("pong\n"); err != nil {
+						return err
+					}
+					return rw.Flush()
+				}),
+			),
+		)
+
+		stream, err := recorder.NewStream(context.Background(), swarm.ZeroAddress, nil, testProtocolName, testProtocolVersion, testStreamName)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer stream.Close()
+
+		start := time.Now()
+		if _, err := stream.Write([]byte("ping\n")); err != nil {
+			t.Fatal(err)
+		}
+		if duration := time.Since(start); duration < latency {
+			t.Errorf("write took %v, want >= %v", duration, latency)
+		}
+
+		start = time.Now()
+		rw := bufio.NewReader(stream)
+		if _, err := rw.ReadString('\n'); err != nil {
+			t.Fatal(err)
+		}
+		if duration := time.Since(start); duration < latency {
+			t.Errorf("read took %v, want >= %v", duration, latency)
+		}
+	})
+}
+
 const (
 	testProtocolName    = "testing"
 	testProtocolVersion = "1.0.1"
@@ -813,7 +858,7 @@ func testRecords(t *testing.T, records []*streamtest.Record, want [][2]string, w
 		t.Fatalf("got %v records, want %v", lr, lw)
 	}
 
-	for i := 0; i < lr; i++ {
+	for i := range lr {
 		record := records[i]
 
 		if err := record.Err(); !errors.Is(err, wantErr) {

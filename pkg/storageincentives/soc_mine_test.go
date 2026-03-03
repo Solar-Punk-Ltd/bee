@@ -14,6 +14,7 @@ import (
 	"os"
 	"sync"
 	"testing"
+	"testing/synctest"
 
 	"github.com/ethersphere/bee/v2/pkg/bmt"
 	"github.com/ethersphere/bee/v2/pkg/cac"
@@ -32,60 +33,62 @@ import (
 // to generate uploads using the input
 // cat socs.txt | tail 19 | head 16 | perl -pne 's/([a-f0-9]+)\t([a-f0-9]+)\t([a-f0-9]+)\t([a-f0-9]+)/echo -n $4 | xxd -r -p | curl -X POST \"http:\/\/localhost:1633\/soc\/$1\/$2?sig=$3\" -H \"accept: application\/json, text\/plain, \/\" -H \"content-type: application\/octet-stream\" -H \"swarm-postage-batch-id: 14b26beca257e763609143c6b04c2c487f01a051798c535c2f542ce75a97c05f\" --data-binary \@-/'
 func TestSocMine(t *testing.T) {
-	t.Parallel()
-	// the anchor used in neighbourhood selection and reserve salt for sampling
-	prefix, err := hex.DecodeString("3617319a054d772f909f7c479a2cebe5066e836a939412e32403c99029b92eff")
-	if err != nil {
-		t.Fatal(err)
-	}
-	// the transformed address hasher factory function
-	prefixhasher := func() hash.Hash { return swarm.NewPrefixHasher(prefix) }
-	trHasher := func() hash.Hash { return bmt.NewHasher(prefixhasher) }
-	// the bignum cast of the maximum sample value (upper bound on transformed addresses as a 256-bit article)
-	// this constant is for a minimum reserve size of 2 million chunks with sample size of 16
-	// = 1.284401 * 10^71 = 1284401 + 66 0-s
-	mstring := "1284401"
-	for i := 0; i < 66; i++ {
-		mstring = mstring + "0"
-	}
-	n, ok := new(big.Int).SetString(mstring, 10)
-	if !ok {
-		t.Fatalf("SetString: error setting to '%s'", mstring)
-	}
-	// the filter function on the SOC address
-	// meant to make sure we pass check for proof of retrievability for
-	// a node of overlay 0x65xxx with a reserve depth of 1, i.e.,
-	// SOC address must start with zero bit
-	filterSOCAddr := func(a swarm.Address) bool {
-		return a.Bytes()[0]&0x80 != 0x00
-	}
-	// the filter function on the transformed address using the density estimation constant
-	filterTrAddr := func(a swarm.Address) (bool, error) {
-		m := new(big.Int).SetBytes(a.Bytes())
-		return m.Cmp(n) < 0, nil
-	}
-	// setup the signer with a private key from a fixture
-	data, err := hex.DecodeString("634fb5a872396d9693e5c9f9d7233cfa93f395c093371017ff44aa9ae6564cdd")
-	if err != nil {
-		t.Fatal(err)
-	}
-	privKey, err := crypto.DecodeSecp256k1PrivateKey(data)
-	if err != nil {
-		t.Fatal(err)
-	}
-	signer := crypto.NewDefaultSigner(privKey)
+	synctest.Test(t, func(t *testing.T) {
+		// the anchor used in neighbourhood selection and reserve salt for sampling
+		prefix, err := hex.DecodeString("3617319a054d772f909f7c479a2cebe5066e836a939412e32403c99029b92eff")
+		if err != nil {
+			t.Fatal(err)
+		}
+		// the transformed address hasher factory function
+		prefixhasher := func() hash.Hash { return swarm.NewPrefixHasher(prefix) }
+		// Create a pool for efficient hasher reuse
+		trHasherPool := bmt.NewPool(bmt.NewConf(prefixhasher, swarm.BmtBranches, 8))
+		// the bignum cast of the maximum sample value (upper bound on transformed addresses as a 256-bit article)
+		// this constant is for a minimum reserve size of 2 million chunks with sample size of 16
+		// = 1.284401 * 10^71 = 1284401 + 66 0-s
+		mstring := "1284401"
+		for range 66 {
+			mstring = mstring + "0"
+		}
+		n, ok := new(big.Int).SetString(mstring, 10)
+		if !ok {
+			t.Fatalf("SetString: error setting to '%s'", mstring)
+		}
+		// the filter function on the SOC address
+		// meant to make sure we pass check for proof of retrievability for
+		// a node of overlay 0x65xxx with a reserve depth of 1, i.e.,
+		// SOC address must start with zero bit
+		filterSOCAddr := func(a swarm.Address) bool {
+			return a.Bytes()[0]&0x80 != 0x00
+		}
+		// the filter function on the transformed address using the density estimation constant
+		filterTrAddr := func(a swarm.Address) (bool, error) {
+			m := new(big.Int).SetBytes(a.Bytes())
+			return m.Cmp(n) < 0, nil
+		}
+		// setup the signer with a private key from a fixture
+		data, err := hex.DecodeString("634fb5a872396d9693e5c9f9d7233cfa93f395c093371017ff44aa9ae6564cdd")
+		if err != nil {
+			t.Fatal(err)
+		}
+		privKey, err := crypto.DecodeSecp256k1PrivateKey(data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		signer := crypto.NewDefaultSigner(privKey)
 
-	sampleSize := 16
-	// for sanity check: given a filterSOCAddr requiring a 0 leading bit (chance of 1/2)
-	// we expect an overall rough 4 million chunks to be mined to create this sample
-	// for 8 workers that is half a million round on average per worker
-	err = makeChunks(t, signer, sampleSize, filterSOCAddr, filterTrAddr, trHasher)
-	if err != nil {
-		t.Fatal(err)
-	}
+		sampleSize := 16
+		// for sanity check: given a filterSOCAddr requiring a 0 leading bit (chance of 1/2)
+		// we expect an overall rough 4 million chunks to be mined to create this sample
+		// for 8 workers that is half a million round on average per worker
+		err = makeChunks(t, signer, sampleSize, filterSOCAddr, filterTrAddr, trHasherPool)
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
 }
 
-func makeChunks(t *testing.T, signer crypto.Signer, sampleSize int, filterSOCAddr func(swarm.Address) bool, filterTrAddr func(swarm.Address) (bool, error), trHasher func() hash.Hash) error {
+func makeChunks(t *testing.T, signer crypto.Signer, sampleSize int, filterSOCAddr func(swarm.Address) bool, filterTrAddr func(swarm.Address) (bool, error), trHasherPool *bmt.Pool) error {
 	t.Helper()
 
 	// set owner address from signer
@@ -110,7 +113,7 @@ func makeChunks(t *testing.T, signer crypto.Signer, sampleSize int, filterSOCAdd
 	// the main loop terminating after sampleSize SOCs have been generated
 	eg.Go(func() error {
 		defer cancel()
-		for i := 0; i < sampleSize; i++ {
+		for i := range sampleSize {
 			select {
 			case sample[i] = <-sampleC:
 			case <-ectx.Done():
@@ -124,11 +127,13 @@ func makeChunks(t *testing.T, signer crypto.Signer, sampleSize int, filterSOCAdd
 	// loop to start mining workers
 	count := 8 // number of parallel workers
 	wg := sync.WaitGroup{}
-	for i := 0; i < count; i++ {
+	for i := range count {
 		wg.Add(1)
 		eg.Go(func() (err error) {
 			offset := i * 4
 			found := 0
+			// Get one hasher per goroutine from the pool to avoid race conditions
+			hasher := trHasherPool.Get()
 			for seed := uint32(1); ; seed++ {
 				select {
 				case <-ectx.Done():
@@ -148,9 +153,9 @@ func makeChunks(t *testing.T, signer crypto.Signer, sampleSize int, filterSOCAdd
 				if !filterSOCAddr(addr) {
 					continue
 				}
-				hasher := trHasher()
 				data := s.WrappedChunk().Data()
-				hasher.(*bmt.Hasher).SetHeader(data[:8])
+				hasher.Reset()
+				hasher.SetHeader(data[:8])
 				_, err = hasher.Write(data[8:])
 				if err != nil {
 					return err

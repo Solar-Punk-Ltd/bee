@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"math/big"
 	"strings"
 	"sync"
@@ -311,10 +312,7 @@ func (a *Accounting) PrepareCredit(ctx context.Context, peer swarm.Address, pric
 		}
 	}
 
-	timeElapsedInSeconds := (a.timeNow().UnixMilli() - accountingPeer.refreshTimestampMilliseconds) / 1000
-	if timeElapsedInSeconds > 1 {
-		timeElapsedInSeconds = 1
-	}
+	timeElapsedInSeconds := min((a.timeNow().UnixMilli()-accountingPeer.refreshTimestampMilliseconds)/1000, 1)
 
 	refreshDue := new(big.Int).Mul(big.NewInt(timeElapsedInSeconds), a.refreshRate)
 	overdraftLimit := new(big.Int).Add(accountingPeer.paymentThreshold, refreshDue)
@@ -721,9 +719,7 @@ func (a *Accounting) PeerAccounting() (map[string]PeerInfo, error) {
 
 	a.accountingPeersMu.Lock()
 	accountingPeersList := make(map[string]*accountingPeer)
-	for peer, accountingPeer := range a.accountingPeers {
-		accountingPeersList[peer] = accountingPeer
-	}
+	maps.Copy(accountingPeersList, a.accountingPeers)
 	a.accountingPeersMu.Unlock()
 
 	for peer, accountingPeer := range accountingPeersList {
@@ -746,10 +742,7 @@ func (a *Accounting) PeerAccounting() (map[string]PeerInfo, error) {
 
 		t := a.timeNow()
 
-		timeElapsedInSeconds := t.Unix() - accountingPeer.refreshReceivedTimestamp
-		if timeElapsedInSeconds > 1 {
-			timeElapsedInSeconds = 1
-		}
+		timeElapsedInSeconds := min(t.Unix()-accountingPeer.refreshReceivedTimestamp, 1)
 
 		// get appropriate refresh rate
 		refreshRate := new(big.Int).Set(a.refreshRate)
@@ -760,10 +753,7 @@ func (a *Accounting) PeerAccounting() (map[string]PeerInfo, error) {
 		refreshDue := new(big.Int).Mul(big.NewInt(timeElapsedInSeconds), refreshRate)
 		currentThresholdGiven := new(big.Int).Add(accountingPeer.disconnectLimit, refreshDue)
 
-		timeElapsedInSeconds = (t.UnixMilli() - accountingPeer.refreshTimestampMilliseconds) / 1000
-		if timeElapsedInSeconds > 1 {
-			timeElapsedInSeconds = 1
-		}
+		timeElapsedInSeconds = min((t.UnixMilli()-accountingPeer.refreshTimestampMilliseconds)/1000, 1)
 
 		// get appropriate refresh rate
 		refreshDue = new(big.Int).Mul(big.NewInt(timeElapsedInSeconds), a.refreshRate)
@@ -1353,10 +1343,7 @@ func (d *debitAction) Apply() error {
 	a.metrics.TotalDebitedAmount.Add(tot)
 	a.metrics.DebitEventsCount.Inc()
 
-	timeElapsedInSeconds := a.timeNow().Unix() - d.accountingPeer.refreshReceivedTimestamp
-	if timeElapsedInSeconds > 1 {
-		timeElapsedInSeconds = 1
-	}
+	timeElapsedInSeconds := min(a.timeNow().Unix()-d.accountingPeer.refreshReceivedTimestamp, 1)
 
 	// get appropriate refresh rate
 	refreshRate := new(big.Int).Set(a.refreshRate)

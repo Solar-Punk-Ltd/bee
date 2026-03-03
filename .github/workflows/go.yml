@@ -21,12 +21,21 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
     - name: Checkout
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
     - name: Setup Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@v6
       with:
         cache: true
         go-version-file: go.mod
+    - name: Increase UDP buffer sizes (Ubuntu)
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        sudo sysctl -w net.core.rmem_max=7500000
+        sudo sysctl -w net.core.wmem_max=7500000
+    - name: Increase UDP buffer sizes (macOS)
+      if: matrix.os == 'macos-latest'
+      run: |
+        sudo sysctl -w kern.ipc.maxsockbuf=6291456
     - name: Build
       run: make build
     - name: Test with race detector (Ubuntu and MacOS)
@@ -41,9 +50,9 @@ jobs:
     continue-on-error: ${{ github.ref == 'refs/heads/master' }}
     steps:
     - name: Checkout
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
     - name: Setup Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@v6
       with:
         cache: true
         go-version-file: go.mod
@@ -55,22 +64,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
       with:
         fetch-depth: 0
     - name: Setup Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@v6
       with:
         cache: false
         go-version-file: go.mod
     - name: Commit linting
       if: github.ref != 'refs/heads/master'
       uses: wagoid/commitlint-github-action@v5
+      with:
+        configFile: commitlint.config.js
     - name: GolangCI-Lint
-      uses: golangci/golangci-lint-action@v6
+      uses: golangci/golangci-lint-action@4afd733a84b1f43292c63897423277bb7f4313a9 # v8
       with:
         skip-cache: false
-        version: v1.64.5
+        version: v2.5.0
     - name: Whitespace check
       run: make check-whitespace
     - name: go mod tidy check
@@ -81,9 +92,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
     - name: Setup Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@v6
       with:
         cache: false
         go-version-file: go.mod
@@ -97,7 +108,7 @@ jobs:
     - name: Test with code coverage
       run: make cover=1 test-ci
     - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v5
+      uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de # v5
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
         fail_ci_if_error: true
@@ -109,11 +120,11 @@ jobs:
     if: github.ref == 'refs/heads/master'
     steps:
     - name: Checkout
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
       with:
         fetch-depth: 0
     - name: Setup Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@v6
       with:
         cache: false
         go-version-file: go.mod

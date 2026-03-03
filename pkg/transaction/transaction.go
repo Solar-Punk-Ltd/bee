@@ -14,6 +14,8 @@ import (
 	"sync"
 	"time"
 
+	"context"
+
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
@@ -23,14 +25,12 @@ import (
 	"github.com/ethersphere/bee/v2/pkg/log"
 	"github.com/ethersphere/bee/v2/pkg/sctx"
 	"github.com/ethersphere/bee/v2/pkg/storage"
-	"golang.org/x/net/context"
 )
 
 // loggerName is the tree path name of the logger for this package.
 const loggerName = "transaction"
 
 const (
-	noncePrefix              = "transaction_nonce_"
 	storedTransactionPrefix  = "transaction_stored_"
 	pendingTransactionPrefix = "transaction_pending_"
 )
@@ -41,14 +41,11 @@ var (
 	ErrTransactionReverted = errors.New("transaction reverted")
 	ErrUnknownTransaction  = errors.New("unknown transaction")
 	ErrAlreadyImported     = errors.New("already imported")
-	ErrEIP1559NotSupported = errors.New("network does not appear to support EIP-1559 (no baseFee)")
 )
 
 const (
-	DefaultGasLimit               = 1_000_000
-	DefaultTipBoostPercent        = 25
-	MinimumGasTipCap              = 1_500_000_000 // 1.5 Gwei
-	RedistributionTipBoostPercent = 50
+	DefaultGasLimit        = 1_000_000
+	DefaultTipBoostPercent = 25
 )
 
 // TxRequest describes a request for a transaction that can be executed.
@@ -144,8 +141,7 @@ func NewService(logger log.Logger, overlayEthAddress common.Address, backend Bac
 		monitor: monitor,
 	}
 
-	err = t.waitForAllPendingTx()
-	if err != nil {
+	if err = t.waitForAllPendingTx(); err != nil {
 		return nil, err
 	}
 
@@ -226,9 +222,7 @@ func (t *transactionService) Send(ctx context.Context, request *TxRequest, boost
 }
 
 func (t *transactionService) waitForPendingTx(txHash common.Hash) {
-	t.wg.Add(1)
-	go func() {
-		defer t.wg.Done()
+	t.wg.Go(func() {
 		switch _, err := t.WaitForReceipt(t.ctx, txHash); err {
 		case nil:
 			t.logger.Info("pending transaction confirmed", "tx", txHash)
@@ -243,7 +237,7 @@ func (t *transactionService) waitForPendingTx(txHash common.Hash) {
 				t.logger.Error(err, "waiting for pending transaction failed", "tx", txHash)
 			}
 		}
-	}()
+	})
 }
 
 func (t *transactionService) Call(ctx context.Context, request *TxRequest) ([]byte, error) {
@@ -279,11 +273,11 @@ func (t *transactionService) StoredTransaction(txHash common.Hash) (*StoredTrans
 func (t *transactionService) prepareTransaction(ctx context.Context, request *TxRequest, nonce uint64, boostPercent int) (tx *types.Transaction, err error) {
 	var gasLimit uint64
 	if request.GasLimit == 0 {
-		gasLimit, err = t.backend.EstimateGas(ctx, ethereum.CallMsg{
+		gasLimit, err = t.backend.EstimateGasAtBlock(ctx, ethereum.CallMsg{
 			From: t.sender,
 			To:   request.To,
 			Data: request.Data,
-		})
+		}, nil) // nil for latest block
 		if err != nil {
 			t.logger.Debug("estimate gas failed", "error", err)
 			gasLimit = request.MinEstimatedGasLimit
@@ -309,7 +303,7 @@ func (t *transactionService) prepareTransaction(ctx context.Context, request *Tx
 		notice that gas price does not exceed 20 as defined by max fee.
 	*/
 
-	gasFeeCap, gasTipCap, err := t.suggestedFeeAndTip(ctx, request.GasPrice, boostPercent)
+	gasFeeCap, gasTipCap, err := t.backend.SuggestedFeeAndTip(ctx, request.GasPrice, boostPercent)
 	if err != nil {
 		return nil, err
 	}
@@ -324,51 +318,6 @@ func (t *transactionService) prepareTransaction(ctx context.Context, request *Tx
 		GasTipCap: gasTipCap,
 		Data:      request.Data,
 	}), nil
-}
-
-func (t *transactionService) suggestedFeeAndTip(ctx context.Context, gasPrice *big.Int, boostPercent int) (*big.Int, *big.Int, error) {
-	gasTipCap, err := t.backend.SuggestGasTipCap(ctx)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	multiplier := big.NewInt(int64(boostPercent) + 100)
-	gasTipCap = new(big.Int).Div(new(big.Int).Mul(gasTipCap, multiplier), big.NewInt(100))
-
-	minimumTip := big.NewInt(MinimumGasTipCap)
-	if gasTipCap.Cmp(minimumTip) < 0 {
-		gasTipCap = new(big.Int).Set(minimumTip)
-	}
-
-	var gasFeeCap *big.Int
-
-	if gasPrice == nil {
-		latestBlockHeader, err := t.backend.HeaderByNumber(ctx, nil)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to get latest block: %w", err)
-		}
-
-		if latestBlockHeader.BaseFee == nil {
-			return nil, nil, ErrEIP1559NotSupported
-		}
-
-		// gasFeeCap = (2 * baseFee) + gasTipCap
-		gasFeeCap = new(big.Int).Add(
-			new(big.Int).Mul(latestBlockHeader.BaseFee, big.NewInt(2)),
-			gasTipCap,
-		)
-	} else {
-		gasFeeCap = new(big.Int).Set(gasPrice)
-	}
-
-	if gasTipCap.Cmp(gasFeeCap) > 0 {
-		t.logger.Warning("gas tip cap is higher than gas fee cap, using gas fee cap as gas tip cap", "gas_tip_cap", gasTipCap, "gas_fee_cap", gasFeeCap)
-		gasTipCap = new(big.Int).Set(gasFeeCap)
-	}
-
-	t.logger.Debug("prepare transaction", "gas_max_fee", gasFeeCap, "gas_max_tip", gasTipCap)
-
-	return gasFeeCap, gasTipCap, nil
 }
 
 func storedTransactionKey(txHash common.Hash) string {
@@ -394,7 +343,7 @@ func (t *transactionService) nextNonce(ctx context.Context) (uint64, error) {
 
 	// PendingNonceAt returns the nonce we should use, but we will
 	// compare this to our pending tx list, therefore the -1.
-	var maxNonce = onchainNonce - 1
+	maxNonce := onchainNonce - 1
 	for _, txHash := range pendingTxs {
 		trx, _, err := t.backend.TransactionByHash(ctx, txHash)
 		if err != nil {
@@ -441,7 +390,7 @@ func (t *transactionService) WatchSentTransaction(txHash common.Hash) (<-chan ty
 }
 
 func (t *transactionService) PendingTransactions() ([]common.Hash, error) {
-	var txHashes = make([]common.Hash, 0)
+	txHashes := make([]common.Hash, 0)
 	err := t.store.Iterate(pendingTransactionPrefix, func(key, value []byte) (stop bool, err error) {
 		txHash := common.HexToHash(strings.TrimPrefix(string(key), pendingTransactionPrefix))
 		txHashes = append(txHashes, txHash)
@@ -491,7 +440,7 @@ func (t *transactionService) ResendTransaction(ctx context.Context, txHash commo
 		return err
 	}
 
-	gasFeeCap, gasTipCap, err := t.suggestedFeeAndTip(ctx, sctx.GetGasPrice(ctx), storedTransaction.GasTipBoost)
+	gasFeeCap, gasTipCap, err := t.backend.SuggestedFeeAndTip(ctx, sctx.GetGasPrice(ctx), storedTransaction.GasTipBoost)
 	if err != nil {
 		return err
 	}
@@ -531,7 +480,7 @@ func (t *transactionService) CancelTransaction(ctx context.Context, originalTxHa
 		return common.Hash{}, err
 	}
 
-	gasFeeCap, gasTipCap, err := t.suggestedFeeAndTip(ctx, sctx.GetGasPrice(ctx), 0)
+	gasFeeCap, gasTipCap, err := t.backend.SuggestedFeeAndTip(ctx, sctx.GetGasPrice(ctx), 0)
 	if err != nil {
 		return common.Hash{}, err
 	}
@@ -645,9 +594,9 @@ func (t *transactionService) UnwrapABIError(ctx context.Context, req *TxRequest,
 			continue
 		}
 
-		values, ok := data.([]interface{})
+		values, ok := data.([]any)
 		if !ok {
-			values = make([]interface{}, len(abiError.Inputs))
+			values = make([]any, len(abiError.Inputs))
 			for i := range values {
 				values[i] = "?"
 			}

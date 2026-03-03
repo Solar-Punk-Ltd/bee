@@ -165,6 +165,7 @@ type RadiusChecker interface {
 	IsWithinStorageRadius(addr swarm.Address) bool
 	StorageRadius() uint8
 	CommittedDepth() uint8
+	CapacityDoubling() uint8
 }
 
 // LocalStore is a read-only ChunkStore. It can be used to check if chunk is known
@@ -188,7 +189,7 @@ type memFS struct {
 }
 
 func (m *memFS) Open(path string) (fs.File, error) {
-	return m.Fs.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
+	return m.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
 }
 
 type dirFS struct {

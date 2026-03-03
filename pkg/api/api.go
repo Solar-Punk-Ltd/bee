@@ -43,6 +43,7 @@ import (
 	"github.com/ethersphere/bee/v2/pkg/pss"
 	"github.com/ethersphere/bee/v2/pkg/resolver"
 	"github.com/ethersphere/bee/v2/pkg/resolver/client/ens"
+	"github.com/ethersphere/bee/v2/pkg/resolver/multiresolver"
 	"github.com/ethersphere/bee/v2/pkg/sctx"
 	"github.com/ethersphere/bee/v2/pkg/settlement"
 	"github.com/ethersphere/bee/v2/pkg/settlement/swap"
@@ -78,6 +79,7 @@ const (
 	SwarmSocSignatureHeader           = "Swarm-Soc-Signature"
 	SwarmFeedIndexHeader              = "Swarm-Feed-Index"
 	SwarmFeedIndexNextHeader          = "Swarm-Feed-Index-Next"
+	SwarmFeedResolvedVersionHeader    = "Swarm-Feed-Resolved-Version"
 	SwarmOnlyRootChunk                = "Swarm-Only-Root-Chunk"
 	SwarmCollectionHeader             = "Swarm-Collection"
 	SwarmPostageBatchIdHeader         = "Swarm-Postage-Batch-Id"
@@ -109,9 +111,8 @@ const (
 )
 
 const (
-	multiPartFormData  = "multipart/form-data"
-	contentTypeTar     = "application/x-tar"
-	boolHeaderSetValue = "true"
+	multiPartFormData = "multipart/form-data"
+	contentTypeTar    = "application/x-tar"
 )
 
 var (
@@ -214,8 +215,9 @@ type Service struct {
 
 	whitelistedWithdrawalAddress []common.Address
 
-	preMapHooks map[string]func(v string) (string, error)
-	validate    *validator.Validate
+	preMapHooks              map[string]func(v string) (string, error)
+	customValidationMessages map[string]func(err validator.FieldError) error
+	validate                 *validator.Validate
 
 	redistributionAgent *storageincentives.Agent
 
@@ -321,6 +323,7 @@ func New(
 		}
 		return name
 	})
+	s.setupValidation()
 	s.stamperStore = stamperStore
 
 	for _, v := range whitelistedWithdrawalAddress {
@@ -447,6 +450,10 @@ func (s *Service) resolveNameOrAddress(str string) (swarm.Address, error) {
 	if err == nil {
 		s.loggerV1.Debug("resolve name: address resolved successfully", "string", str, "address", addr)
 		return addr, nil
+	}
+
+	if errors.Is(err, multiresolver.ErrResolverService) || errors.Is(err, resolver.ErrServiceNotAvailable) {
+		return swarm.ZeroAddress, err
 	}
 
 	return swarm.ZeroAddress, fmt.Errorf("%w: %w", errInvalidNameOrAddress, err)
@@ -620,7 +627,7 @@ func (s *Service) checkOrigin(r *http.Request) bool {
 // validationError is a custom error type for validation errors.
 type validationError struct {
 	Entry string
-	Value interface{}
+	Value any
 	Cause error
 }
 
@@ -632,7 +639,7 @@ func (e *validationError) Error() string {
 // mapStructure maps the input into output struct and validates the output.
 // It's a helper method for the handlers, which reduces the chattiness
 // of the code.
-func (s *Service) mapStructure(input, output interface{}) func(string, log.Logger, http.ResponseWriter) {
+func (s *Service) mapStructure(input, output any) func(string, log.Logger, http.ResponseWriter) {
 	// response unifies the response format for parsing and validation errors.
 	response := func(err error) func(string, log.Logger, http.ResponseWriter) {
 		return func(msg string, logger log.Logger, w http.ResponseWriter) {
@@ -651,13 +658,23 @@ func (s *Service) mapStructure(input, output interface{}) func(string, log.Logge
 				Message: msg,
 				Code:    http.StatusBadRequest,
 			}
+			hasServiceUnavailable := false
 			for _, err := range merr.Errors {
+				if errors.Is(err, resolver.ErrServiceNotAvailable) {
+					hasServiceUnavailable = true
+					resp.Reasons = append(resp.Reasons, jsonhttp.Reason{
+						Field: "address",
+						Error: err.Error(),
+					})
+					continue
+				}
 				var perr *parseError
 				if errors.As(err, &perr) {
 					resp.Reasons = append(resp.Reasons, jsonhttp.Reason{
 						Field: perr.Entry,
 						Error: perr.Cause.Error(),
 					})
+					continue
 				}
 				var verr *validationError
 				if errors.As(err, &verr) {
@@ -667,7 +684,14 @@ func (s *Service) mapStructure(input, output interface{}) func(string, log.Logge
 					})
 				}
 			}
-			jsonhttp.BadRequest(w, resp)
+
+			if hasServiceUnavailable {
+				resp.Message = "service unavailable"
+				resp.Code = http.StatusServiceUnavailable
+				jsonhttp.ServiceUnavailable(w, resp)
+			} else {
+				jsonhttp.BadRequest(w, resp)
+			}
 		}
 	}
 
@@ -688,11 +712,17 @@ func (s *Service) mapStructure(input, output interface{}) func(string, log.Logge
 			case []byte:
 				val = string(v)
 			}
+			var cause error
+			if msgFn, ok := s.customValidationMessages[err.Tag()]; ok {
+				cause = msgFn(err)
+			} else {
+				cause = fmt.Errorf("want %s:%s", err.Tag(), err.Param())
+			}
 			vErrs = multierror.Append(vErrs,
 				&validationError{
 					Entry: strings.ToLower(err.Field()),
 					Value: val,
-					Cause: fmt.Errorf("want %s:%s", err.Tag(), err.Param()),
+					Cause: cause,
 				})
 		}
 		return response(vErrs.ErrorOrNil())

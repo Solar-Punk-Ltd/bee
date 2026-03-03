@@ -31,7 +31,7 @@ import (
 )
 
 var (
-	minimumTip = big.NewInt(transaction.MinimumGasTipCap)
+	minimumTip = big.NewInt(1_500_000_000)
 	baseFee    = big.NewInt(3_000_000_000)
 )
 
@@ -73,6 +73,39 @@ func signerMockForTransaction(t *testing.T, signedTx *types.Transaction, sender 
 			return sender, nil
 		}),
 	)
+}
+
+func checkStoredTransaction(t *testing.T, transactionService transaction.Service, txHash common.Hash, request *transaction.TxRequest, recipient common.Address, gasLimit uint64, gasPrice *big.Int, nonce uint64) {
+	t.Helper()
+
+	storedTransaction, err := transactionService.StoredTransaction(txHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if storedTransaction.To == nil || *storedTransaction.To != recipient {
+		t.Fatalf("got wrong recipient in stored transaction. wanted %x, got %x", recipient, storedTransaction.To)
+	}
+
+	if !bytes.Equal(storedTransaction.Data, request.Data) {
+		t.Fatalf("got wrong data in stored transaction. wanted %x, got %x", request.Data, storedTransaction.Data)
+	}
+
+	if storedTransaction.Description != request.Description {
+		t.Fatalf("got wrong description in stored transaction. wanted %x, got %x", request.Description, storedTransaction.Description)
+	}
+
+	if storedTransaction.GasLimit != gasLimit {
+		t.Fatalf("got wrong gas limit in stored transaction. wanted %d, got %d", gasLimit, storedTransaction.GasLimit)
+	}
+
+	if gasPrice.Cmp(storedTransaction.GasPrice) != 0 {
+		t.Fatalf("got wrong gas price in stored transaction. wanted %d, got %d", gasPrice, storedTransaction.GasPrice)
+	}
+
+	if storedTransaction.Nonce != nonce {
+		t.Fatalf("got wrong nonce in stored transaction. wanted %d, got %d", nonce, storedTransaction.Nonce)
+	}
 }
 
 func TestTransactionSend(t *testing.T) {
@@ -118,11 +151,11 @@ func TestTransactionSend(t *testing.T) {
 					}
 					return nil
 				}),
-				backendmock.WithEstimateGasFunc(func(ctx context.Context, call ethereum.CallMsg) (gas uint64, err error) {
-					if !bytes.Equal(call.To.Bytes(), recipient.Bytes()) {
-						t.Fatalf("estimating with wrong recipient. wanted %x, got %x", recipient, call.To)
+				backendmock.WithEstimateGasAtBlockFunc(func(ctx context.Context, msg ethereum.CallMsg, blockNumber *big.Int) (gas uint64, err error) {
+					if !bytes.Equal(msg.To.Bytes(), recipient.Bytes()) {
+						t.Fatalf("estimating with wrong recipient. wanted %x, got %x", recipient, msg.To)
 					}
-					if !bytes.Equal(call.Data, txData) {
+					if !bytes.Equal(msg.Data, txData) {
 						t.Fatal("estimating with wrong data")
 					}
 					return estimatedGasLimit, nil
@@ -130,11 +163,8 @@ func TestTransactionSend(t *testing.T) {
 				backendmock.WithPendingNonceAtFunc(func(ctx context.Context, account common.Address) (uint64, error) {
 					return nonce - 1, nil
 				}),
-				backendmock.WithSuggestGasTipCapFunc(func(ctx context.Context) (*big.Int, error) {
-					return suggestedGasTip, nil
-				}),
-				backendmock.WithHeaderbyNumberFunc(func(ctx context.Context, number *big.Int) (*types.Header, error) {
-					return &types.Header{BaseFee: baseFee}, nil
+				backendmock.WithSuggestedFeeAndTipFunc(func(ctx context.Context, gasPrice *big.Int, boostPercent int) (*big.Int, *big.Int, error) {
+					return gasFeeCap, suggestedGasTip, nil
 				}),
 			),
 			signerMockForTransaction(t, signedTx, sender, chainID),
@@ -160,34 +190,7 @@ func TestTransactionSend(t *testing.T) {
 			t.Fatal("returning wrong transaction hash")
 		}
 
-		storedTransaction, err := transactionService.StoredTransaction(txHash)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		if storedTransaction.To == nil || *storedTransaction.To != recipient {
-			t.Fatalf("got wrong recipient in stored transaction. wanted %x, got %x", recipient, storedTransaction.To)
-		}
-
-		if !bytes.Equal(storedTransaction.Data, request.Data) {
-			t.Fatalf("got wrong data in stored transaction. wanted %x, got %x", request.Data, storedTransaction.Data)
-		}
-
-		if storedTransaction.Description != request.Description {
-			t.Fatalf("got wrong description in stored transaction. wanted %x, got %x", request.Description, storedTransaction.Description)
-		}
-
-		if storedTransaction.GasLimit != gasLimit {
-			t.Fatalf("got wrong gas limit in stored transaction. wanted %d, got %d", gasLimit, storedTransaction.GasLimit)
-		}
-
-		if gasFeeCap.Cmp(storedTransaction.GasPrice) != 0 {
-			t.Fatalf("got wrong gas price in stored transaction. wanted %d, got %d", gasFeeCap, storedTransaction.GasPrice)
-		}
-
-		if storedTransaction.Nonce != nonce {
-			t.Fatalf("got wrong nonce in stored transaction. wanted %d, got %d", nonce, storedTransaction.Nonce)
-		}
+		checkStoredTransaction(t, transactionService, txHash, request, recipient, gasLimit, gasFeeCap, nonce)
 
 		pending, err := transactionService.PendingTransactions()
 		if err != nil {
@@ -231,17 +234,14 @@ func TestTransactionSend(t *testing.T) {
 					}
 					return nil
 				}),
-				backendmock.WithEstimateGasFunc(func(ctx context.Context, call ethereum.CallMsg) (gas uint64, err error) {
+				backendmock.WithEstimateGasAtBlockFunc(func(ctx context.Context, msg ethereum.CallMsg, blockNumber *big.Int) (gas uint64, err error) {
 					return 0, errors.New("estimate failure")
 				}),
 				backendmock.WithPendingNonceAtFunc(func(ctx context.Context, account common.Address) (uint64, error) {
 					return nonce - 1, nil
 				}),
-				backendmock.WithSuggestGasTipCapFunc(func(ctx context.Context) (*big.Int, error) {
-					return suggestedGasTip, nil
-				}),
-				backendmock.WithHeaderbyNumberFunc(func(ctx context.Context, number *big.Int) (*types.Header, error) {
-					return &types.Header{BaseFee: baseFee}, nil
+				backendmock.WithSuggestedFeeAndTipFunc(func(ctx context.Context, gasPrice *big.Int, boostPercent int) (*big.Int, *big.Int, error) {
+					return gasFeeCap, suggestedGasTip, nil
 				}),
 			),
 			signerMockForTransaction(t, signedTx, sender, chainID),
@@ -267,34 +267,7 @@ func TestTransactionSend(t *testing.T) {
 			t.Fatal("returning wrong transaction hash")
 		}
 
-		storedTransaction, err := transactionService.StoredTransaction(txHash)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		if storedTransaction.To == nil || *storedTransaction.To != recipient {
-			t.Fatalf("got wrong recipient in stored transaction. wanted %x, got %x", recipient, storedTransaction.To)
-		}
-
-		if !bytes.Equal(storedTransaction.Data, request.Data) {
-			t.Fatalf("got wrong data in stored transaction. wanted %x, got %x", request.Data, storedTransaction.Data)
-		}
-
-		if storedTransaction.Description != request.Description {
-			t.Fatalf("got wrong description in stored transaction. wanted %x, got %x", request.Description, storedTransaction.Description)
-		}
-
-		if storedTransaction.GasLimit != gasLimit {
-			t.Fatalf("got wrong gas limit in stored transaction. wanted %d, got %d", gasLimit, storedTransaction.GasLimit)
-		}
-
-		if gasFeeCap.Cmp(storedTransaction.GasPrice) != 0 {
-			t.Fatalf("got wrong gas price in stored transaction. wanted %d, got %d", gasFeeCap, storedTransaction.GasPrice)
-		}
-
-		if storedTransaction.Nonce != nonce {
-			t.Fatalf("got wrong nonce in stored transaction. wanted %d, got %d", nonce, storedTransaction.Nonce)
-		}
+		checkStoredTransaction(t, transactionService, txHash, request, recipient, gasLimit, gasFeeCap, nonce)
 
 		pending, err := transactionService.PendingTransactions()
 		if err != nil {
@@ -341,11 +314,11 @@ func TestTransactionSend(t *testing.T) {
 					}
 					return nil
 				}),
-				backendmock.WithEstimateGasFunc(func(ctx context.Context, call ethereum.CallMsg) (gas uint64, err error) {
-					if !bytes.Equal(call.To.Bytes(), recipient.Bytes()) {
-						t.Fatalf("estimating with wrong recipient. wanted %x, got %x", recipient, call.To)
+				backendmock.WithEstimateGasAtBlockFunc(func(ctx context.Context, msg ethereum.CallMsg, blockNumber *big.Int) (gas uint64, err error) {
+					if !bytes.Equal(msg.To.Bytes(), recipient.Bytes()) {
+						t.Fatalf("estimating with wrong recipient. wanted %x, got %x", recipient, msg.To)
 					}
-					if !bytes.Equal(call.Data, txData) {
+					if !bytes.Equal(msg.Data, txData) {
 						t.Fatal("estimating with wrong data")
 					}
 					return estimatedGasLimit, nil
@@ -353,11 +326,8 @@ func TestTransactionSend(t *testing.T) {
 				backendmock.WithPendingNonceAtFunc(func(ctx context.Context, account common.Address) (uint64, error) {
 					return nonce - 1, nil
 				}),
-				backendmock.WithSuggestGasTipCapFunc(func(ctx context.Context) (*big.Int, error) {
-					return suggestedGasTip, nil
-				}),
-				backendmock.WithHeaderbyNumberFunc(func(ctx context.Context, number *big.Int) (*types.Header, error) {
-					return &types.Header{BaseFee: baseFee}, nil
+				backendmock.WithSuggestedFeeAndTipFunc(func(ctx context.Context, gasPrice *big.Int, boostPercent int) (*big.Int, *big.Int, error) {
+					return gasFeeCapWithBoost, suggestedGasTip, nil
 				}),
 			),
 			signerMockForTransaction(t, signedTx, sender, chainID),
@@ -383,34 +353,7 @@ func TestTransactionSend(t *testing.T) {
 			t.Fatal("returning wrong transaction hash")
 		}
 
-		storedTransaction, err := transactionService.StoredTransaction(txHash)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		if storedTransaction.To == nil || *storedTransaction.To != recipient {
-			t.Fatalf("got wrong recipient in stored transaction. wanted %x, got %x", recipient, storedTransaction.To)
-		}
-
-		if !bytes.Equal(storedTransaction.Data, request.Data) {
-			t.Fatalf("got wrong data in stored transaction. wanted %x, got %x", request.Data, storedTransaction.Data)
-		}
-
-		if storedTransaction.Description != request.Description {
-			t.Fatalf("got wrong description in stored transaction. wanted %x, got %x", request.Description, storedTransaction.Description)
-		}
-
-		if storedTransaction.GasLimit != gasLimit {
-			t.Fatalf("got wrong gas limit in stored transaction. wanted %d, got %d", gasLimit, storedTransaction.GasLimit)
-		}
-
-		if gasFeeCapWithBoost.Cmp(storedTransaction.GasPrice) != 0 {
-			t.Fatalf("got wrong gas price in stored transaction. wanted %d, got %d", gasFeeCapWithBoost, storedTransaction.GasPrice)
-		}
-
-		if storedTransaction.Nonce != nonce {
-			t.Fatalf("got wrong nonce in stored transaction. wanted %d, got %d", nonce, storedTransaction.Nonce)
-		}
+		checkStoredTransaction(t, transactionService, txHash, request, recipient, gasLimit, gasFeeCapWithBoost, nonce)
 
 		pending, err := transactionService.PendingTransactions()
 		if err != nil {
@@ -453,11 +396,11 @@ func TestTransactionSend(t *testing.T) {
 					}
 					return nil
 				}),
-				backendmock.WithEstimateGasFunc(func(ctx context.Context, call ethereum.CallMsg) (gas uint64, err error) {
-					if !bytes.Equal(call.To.Bytes(), recipient.Bytes()) {
-						t.Fatalf("estimating with wrong recipient. wanted %x, got %x", recipient, call.To)
+				backendmock.WithEstimateGasAtBlockFunc(func(ctx context.Context, msg ethereum.CallMsg, blockNumber *big.Int) (gas uint64, err error) {
+					if !bytes.Equal(msg.To.Bytes(), recipient.Bytes()) {
+						t.Fatalf("estimating with wrong recipient. wanted %x, got %x", recipient, msg.To)
 					}
-					if !bytes.Equal(call.Data, txData) {
+					if !bytes.Equal(msg.Data, txData) {
 						t.Fatal("estimating with wrong data")
 					}
 					return estimatedGasLimit, nil
@@ -465,11 +408,8 @@ func TestTransactionSend(t *testing.T) {
 				backendmock.WithPendingNonceAtFunc(func(ctx context.Context, account common.Address) (uint64, error) {
 					return nonce, nil
 				}),
-				backendmock.WithSuggestGasTipCapFunc(func(ctx context.Context) (*big.Int, error) {
-					return suggestedGasTip, nil
-				}),
-				backendmock.WithHeaderbyNumberFunc(func(ctx context.Context, number *big.Int) (*types.Header, error) {
-					return &types.Header{BaseFee: baseFee}, nil
+				backendmock.WithSuggestedFeeAndTipFunc(func(ctx context.Context, gasPrice *big.Int, boostPercent int) (*big.Int, *big.Int, error) {
+					return gasFeeCap, suggestedGasTip, nil
 				}),
 			),
 			signerMockForTransaction(t, signedTx, sender, chainID),
@@ -521,7 +461,7 @@ func TestTransactionSend(t *testing.T) {
 					}
 					return nil
 				}),
-				backendmock.WithEstimateGasFunc(func(ctx context.Context, call ethereum.CallMsg) (gas uint64, err error) {
+				backendmock.WithEstimateGasAtBlockFunc(func(ctx context.Context, call ethereum.CallMsg, blockNumber *big.Int) (gas uint64, err error) {
 					if !bytes.Equal(call.To.Bytes(), recipient.Bytes()) {
 						t.Fatalf("estimating with wrong recipient. wanted %x, got %x", recipient, call.To)
 					}
@@ -533,11 +473,8 @@ func TestTransactionSend(t *testing.T) {
 				backendmock.WithPendingNonceAtFunc(func(ctx context.Context, account common.Address) (uint64, error) {
 					return nextNonce, nil
 				}),
-				backendmock.WithSuggestGasTipCapFunc(func(ctx context.Context) (*big.Int, error) {
-					return suggestedGasTip, nil
-				}),
-				backendmock.WithHeaderbyNumberFunc(func(ctx context.Context, number *big.Int) (*types.Header, error) {
-					return &types.Header{BaseFee: baseFee}, nil
+				backendmock.WithSuggestedFeeAndTipFunc(func(ctx context.Context, gasPrice *big.Int, boostPercent int) (*big.Int, *big.Int, error) {
+					return gasFeeCap, suggestedGasTip, nil
 				}),
 			),
 			signerMockForTransaction(t, signedTx, sender, chainID),
@@ -590,7 +527,7 @@ func TestTransactionSend(t *testing.T) {
 					}
 					return nil
 				}),
-				backendmock.WithEstimateGasFunc(func(ctx context.Context, call ethereum.CallMsg) (gas uint64, err error) {
+				backendmock.WithEstimateGasAtBlockFunc(func(ctx context.Context, call ethereum.CallMsg, blockNumber *big.Int) (gas uint64, err error) {
 					if !bytes.Equal(call.To.Bytes(), recipient.Bytes()) {
 						t.Fatalf("estimating with wrong recipient. wanted %x, got %x", recipient, call.To)
 					}
@@ -602,11 +539,8 @@ func TestTransactionSend(t *testing.T) {
 				backendmock.WithPendingNonceAtFunc(func(ctx context.Context, account common.Address) (uint64, error) {
 					return nextNonce, nil
 				}),
-				backendmock.WithSuggestGasTipCapFunc(func(ctx context.Context) (*big.Int, error) {
-					return suggestedGasTip, nil
-				}),
-				backendmock.WithHeaderbyNumberFunc(func(ctx context.Context, number *big.Int) (*types.Header, error) {
-					return &types.Header{BaseFee: baseFee}, nil
+				backendmock.WithSuggestedFeeAndTipFunc(func(ctx context.Context, gasPrice *big.Int, boostPercent int) (*big.Int, *big.Int, error) {
+					return customGasFeeCap, customGasFeeCap, nil
 				}),
 			),
 			signerMockForTransaction(t, signedTx, sender, chainID),
@@ -748,11 +682,8 @@ func TestTransactionResend(t *testing.T) {
 				}
 				return nil
 			}),
-			backendmock.WithSuggestGasTipCapFunc(func(ctx context.Context) (*big.Int, error) {
-				return gasTip, nil
-			}),
-			backendmock.WithHeaderbyNumberFunc(func(ctx context.Context, number *big.Int) (*types.Header, error) {
-				return &types.Header{BaseFee: baseFee}, nil
+			backendmock.WithSuggestedFeeAndTipFunc(func(ctx context.Context, gasPrice *big.Int, boostPercent int) (*big.Int, *big.Int, error) {
+				return gasFeeCap, gasTip, nil
 			}),
 		),
 		signerMockForTransaction(t, signedTx, recipient, chainID),
@@ -838,11 +769,8 @@ func TestTransactionCancel(t *testing.T) {
 					}
 					return nil
 				}),
-				backendmock.WithSuggestGasTipCapFunc(func(ctx context.Context) (*big.Int, error) {
-					return gasTip, nil
-				}),
-				backendmock.WithHeaderbyNumberFunc(func(ctx context.Context, number *big.Int) (*types.Header, error) {
-					return &types.Header{BaseFee: baseFee}, nil
+				backendmock.WithSuggestedFeeAndTipFunc(func(ctx context.Context, gasPrice *big.Int, boostPercent int) (*big.Int, *big.Int, error) {
+					return fee, minimumTip, nil
 				}),
 			),
 			signerMockForTransaction(t, cancelTx, recipient, chainID),
@@ -879,7 +807,7 @@ func TestTransactionCancel(t *testing.T) {
 			Value:     big.NewInt(0),
 			Gas:       21000,
 			GasFeeCap: gasFeeCap,
-			GasTipCap: gasTip,
+			GasTipCap: gasTipCap,
 			Data:      []byte{},
 		})
 
@@ -891,8 +819,8 @@ func TestTransactionCancel(t *testing.T) {
 					}
 					return nil
 				}),
-				backendmock.WithSuggestGasTipCapFunc(func(ctx context.Context) (*big.Int, error) {
-					return gasTip, nil
+				backendmock.WithSuggestedFeeAndTipFunc(func(ctx context.Context, gasPrice *big.Int, boostPercent int) (*big.Int, *big.Int, error) {
+					return gasFee, gasTip, nil
 				}),
 			),
 			signerMockForTransaction(t, cancelTx, recipient, chainID),
@@ -924,9 +852,9 @@ type rpcAPIError struct {
 	err  string
 }
 
-func (e *rpcAPIError) ErrorCode() int         { return e.code }
-func (e *rpcAPIError) Error() string          { return e.msg }
-func (e *rpcAPIError) ErrorData() interface{} { return e.err }
+func (e *rpcAPIError) ErrorCode() int { return e.code }
+func (e *rpcAPIError) Error() string  { return e.msg }
+func (e *rpcAPIError) ErrorData() any { return e.err }
 
 var _ rpc.DataError = (*rpcAPIError)(nil)
 

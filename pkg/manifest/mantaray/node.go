@@ -105,23 +105,8 @@ func (n *Node) makeWithMetadata() {
 	n.nodeType = n.nodeType | nodeTypeWithMetadata
 }
 
-//nolint:unused
-func (n *Node) makeNotValue() {
-	n.nodeType = (nodeTypeMask ^ nodeTypeValue) & n.nodeType
-}
-
-//nolint:unused
-func (n *Node) makeNotEdge() {
-	n.nodeType = (nodeTypeMask ^ nodeTypeEdge) & n.nodeType
-}
-
 func (n *Node) makeNotWithPathSeparator() {
 	n.nodeType = (nodeTypeMask ^ nodeTypeWithPathSeparator) & n.nodeType
-}
-
-//nolint:unused
-func (n *Node) makeNotWithMetadata() {
-	n.nodeType = (nodeTypeMask ^ nodeTypeWithMetadata) & n.nodeType
 }
 
 func (n *Node) SetObfuscationKey(obfuscationKey []byte) {
@@ -166,7 +151,7 @@ func (n *Node) LookupNode(ctx context.Context, path []byte, l Loader) (*Node, er
 	}
 	c := common(f.prefix, path)
 	if len(c) == len(f.prefix) {
-		return f.Node.LookupNode(ctx, path[len(c):], l)
+		return f.LookupNode(ctx, path[len(c):], l)
 	}
 	return nil, notFound(path)
 }
@@ -259,7 +244,7 @@ func (n *Node) Add(ctx context.Context, path, entry []byte, metadata map[string]
 			nn.SetObfuscationKey(n.obfuscationKey)
 		}
 		nn.refBytesSize = n.refBytesSize
-		f.Node.updateIsWithPathSeparator(rest)
+		f.updateIsWithPathSeparator(rest)
 		nn.forks[rest[0]] = &fork{rest, f.Node}
 		nn.makeEdge()
 		// if common path is full path new node is value type
@@ -319,7 +304,7 @@ func (n *Node) Remove(ctx context.Context, path []byte, ls LoadSaver) error {
 		delete(n.forks, path[0])
 		return nil
 	}
-	return f.Node.Remove(ctx, rest, ls)
+	return f.Remove(ctx, rest, ls)
 }
 
 func common(a, b []byte) (c []byte) {
@@ -350,7 +335,7 @@ func (n *Node) HasPrefix(ctx context.Context, path []byte, l Loader) (bool, erro
 	}
 	c := common(f.prefix, path)
 	if len(c) == len(f.prefix) {
-		return f.Node.HasPrefix(ctx, path[len(c):], l)
+		return f.HasPrefix(ctx, path[len(c):], l)
 	}
 	if bytes.HasPrefix(f.prefix, path) {
 		return true, nil

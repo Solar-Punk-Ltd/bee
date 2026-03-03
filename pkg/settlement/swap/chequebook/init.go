@@ -60,12 +60,12 @@ func checkBalance(
 		minimumEth := big.NewInt(0)
 
 		if gasPrice == nil {
-			gasPrice, err = swapBackend.SuggestGasPrice(timeoutCtx)
+			gasPrice, _, err = swapBackend.SuggestedFeeAndTip(timeoutCtx, gasPrice, 0)
 			if err != nil {
 				return err
 			}
 
-			minimumEth = gasPrice.Mul(gasPrice, big.NewInt(250000))
+			minimumEth = new(big.Int).Mul(gasPrice, big.NewInt(250000))
 		}
 
 		insufficientERC20 := erc20Balance.Cmp(swapInitialDeposit) < 0
@@ -98,9 +98,16 @@ func checkBalance(
 				msg := fmt.Sprintf("cannot continue until there is at least min %s available on address", swarmTokenName)
 				logger.Warning(msg, "min_amount", neededERC20, "address", overlayEthAddress)
 			}
+
 			if chainId == chaincfg.Testnet.ChainID {
 				logger.Warning("learn how to fund your node by visiting our docs at https://docs.ethswarm.org/docs/installation/fund-your-node")
 			}
+
+			if chainId == chaincfg.Mainnet.ChainID {
+				fundingURL := fmt.Sprintf("https://fund.ethswarm.org/?destination=%s&intent=initial-funding", overlayEthAddress.Hex())
+				logger.Info(fmt.Sprintf("fund your node using the funding URL: %s", fundingURL))
+			}
+
 			select {
 			case <-time.After(balanceCheckBackoffDuration):
 			case <-timeoutCtx.Done():

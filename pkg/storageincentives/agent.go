@@ -46,7 +46,7 @@ type ChainBackend interface {
 	BlockNumber(context.Context) (uint64, error)
 	HeaderByNumber(context.Context, *big.Int) (*types.Header, error)
 	BalanceAt(ctx context.Context, address common.Address, block *big.Int) (*big.Int, error)
-	SuggestGasPrice(ctx context.Context) (*big.Int, error)
+	SuggestedFeeAndTip(ctx context.Context, gasPrice *big.Int, boostPercent int) (*big.Int, *big.Int, error)
 }
 
 type Health interface {
@@ -417,7 +417,7 @@ func (a *Agent) handleSample(ctx context.Context, round uint64) (bool, error) {
 	}
 
 	if !a.state.IsHealthy() {
-		a.logger.Info("skipping round because node is unhealhy", "round", round)
+		a.logger.Info("skipping round because node is unhealthy", "round", round)
 		return false, nil
 	}
 
@@ -604,7 +604,7 @@ func (a *Agent) HasEnoughFundsToPlay(ctx context.Context) (*big.Int, bool, error
 		return nil, false, err
 	}
 
-	price, err := a.backend.SuggestGasPrice(ctx)
+	price, _, err := a.backend.SuggestedFeeAndTip(ctx, nil, redistribution.BoostTipPercent)
 	if err != nil {
 		return nil, false, err
 	}
