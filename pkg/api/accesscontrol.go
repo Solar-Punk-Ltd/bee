@@ -317,10 +317,11 @@ func (s *Service) actGrantRevokeHandler(w http.ResponseWriter, r *http.Request) 
 	}
 	grantees.Revokelist = append(grantees.Revokelist, parsedRevokelist...)
 
+	tag = 1
 	ctx := r.Context()
 	putter, err := s.newStamperPutter(ctx, putterOptions{
 		BatchID:  headers.BatchID,
-		TagID:    1,
+		TagID:    tag,
 		Pin:      headers.Pin,
 		Deferred: true,
 	})
@@ -472,10 +473,11 @@ func (s *Service) actCreateGranteesHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	tag = 1
 	ctx := r.Context()
 	putter, err := s.newStamperPutter(ctx, putterOptions{
 		BatchID:  headers.BatchID,
-		TagID:    1,
+		TagID:    tag,
 		Pin:      headers.Pin,
 		Deferred: true,
 	})
