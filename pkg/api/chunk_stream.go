@@ -55,6 +55,7 @@ func (s *Service) chunkUploadStreamHandler(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
+	tag = 1
 	// if tag not specified use direct upload
 	// Using context.Background here because the putter's lifetime extends beyond that of the HTTP request.
 	putter, err := s.newStamperPutter(context.Background(), putterOptions{

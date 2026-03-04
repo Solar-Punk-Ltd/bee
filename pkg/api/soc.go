@@ -87,9 +87,9 @@ func (s *Service) socUploadHandler(w http.ResponseWriter, r *http.Request) {
 	} else {
 		putter, err = s.newStamperPutter(r.Context(), putterOptions{
 			BatchID:  headers.BatchID,
-			TagID:    0,
+			TagID:    1,
 			Pin:      false,
-			Deferred: false,
+			Deferred: true,
 		})
 	}
 	if err != nil {

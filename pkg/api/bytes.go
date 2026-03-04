@@ -76,9 +76,9 @@ func (s *Service) bytesUploadHandler(w http.ResponseWriter, r *http.Request) {
 
 	putter, err := s.newStamperPutter(ctx, putterOptions{
 		BatchID:  headers.BatchID,
-		TagID:    tag,
+		TagID:    1,
 		Pin:      headers.Pin,
-		Deferred: deferred,
+		Deferred: true,
 	})
 	if err != nil {
 		logger.Debug("get putter failed", "error", err)

@@ -320,9 +320,9 @@ func (s *Service) actGrantRevokeHandler(w http.ResponseWriter, r *http.Request) 
 	ctx := r.Context()
 	putter, err := s.newStamperPutter(ctx, putterOptions{
 		BatchID:  headers.BatchID,
-		TagID:    tag,
+		TagID:    1,
 		Pin:      headers.Pin,
-		Deferred: deferred,
+		Deferred: true,
 	})
 	if err != nil {
 		logger.Debug("putter failed", "error", err)
@@ -475,9 +475,9 @@ func (s *Service) actCreateGranteesHandler(w http.ResponseWriter, r *http.Reques
 	ctx := r.Context()
 	putter, err := s.newStamperPutter(ctx, putterOptions{
 		BatchID:  headers.BatchID,
-		TagID:    tag,
+		TagID:    1,
 		Pin:      headers.Pin,
-		Deferred: deferred,
+		Deferred: true,
 	})
 	if err != nil {
 		logger.Debug("putter failed", "error", err)
