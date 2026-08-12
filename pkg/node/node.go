@@ -164,6 +164,7 @@ type Options struct {
 	AutoTLSDomain                 string
 	AutoTLSRegistrationEndpoint   string
 	FullNodeMode                  bool
+	LightNodeLimit                int
 	GasLimitFallback              uint64
 	Logger                        log.Logger
 	MinimumGasTipCap              uint64
@@ -707,6 +708,7 @@ func NewBee(
 		AutoTLSCAEndpoint:           o.AutoTLSCAEndpoint,
 		WelcomeMessage:              o.WelcomeMessage,
 		FullNode:                    o.FullNodeMode,
+		LightNodeLimit:              o.LightNodeLimit,
 		Nonce:                       nonce,
 		AllowPrivateCIDRs:           o.AllowPrivateCIDRs,
 		Registry:                    registry,
