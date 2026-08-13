@@ -165,6 +165,7 @@ type Options struct {
 	AutoTLSRegistrationEndpoint   string
 	FullNodeMode                  bool
 	LightNodeLimit                int
+	LightFactor                   int64
 	GasLimitFallback              uint64
 	Logger                        log.Logger
 	MinimumGasTipCap              uint64
@@ -978,14 +979,25 @@ func NewBee(
 
 	}
 
+	// ⛔ loadlab: `lightFactor` scales BOTH a light peer's refresh rate and its payment threshold,
+	// which is what the const above says and is the coherent pairing: a peer allowed to draw faster
+	// should hold proportionally more credit before it must settle. It is the ceiling on what an
+	// unfunded reader can draw, measured at ~1.2 chunks/s with the stock 10, and no flag moved it.
+	// Unset or non-positive keeps upstream's value exactly.
+	lightFactorUsed := int64(lightFactor)
+	if o.LightFactor > 0 {
+		lightFactorUsed = o.LightFactor
+	}
+	lightRefreshRateUsed := refreshRate / lightFactorUsed
+
 	minThreshold := big.NewInt(2 * refreshRate)
 	maxThreshold := big.NewInt(24 * refreshRate)
 
 	if !o.FullNodeMode {
-		minThreshold = big.NewInt(2 * lightRefreshRate)
+		minThreshold = big.NewInt(2 * lightRefreshRateUsed)
 	}
 
-	lightPaymentThreshold := new(big.Int).Div(paymentThreshold, big.NewInt(lightFactor))
+	lightPaymentThreshold := new(big.Int).Div(paymentThreshold, big.NewInt(lightFactorUsed))
 
 	pricer := pricer.NewFixedPricer(swarmAddress, basePrice)
 
@@ -1017,7 +1029,7 @@ func NewBee(
 	if o.FullNodeMode {
 		enforcedRefreshRate = big.NewInt(refreshRate)
 	} else {
-		enforcedRefreshRate = big.NewInt(lightRefreshRate)
+		enforcedRefreshRate = big.NewInt(lightRefreshRateUsed)
 	}
 
 	acc, err := accounting.NewAccounting(
@@ -1028,7 +1040,7 @@ func NewBee(
 		stateStore,
 		pricing,
 		new(big.Int).Set(enforcedRefreshRate),
-		lightFactor,
+		lightFactorUsed,
 		p2ps,
 	)
 	if err != nil {
@@ -1036,7 +1048,7 @@ func NewBee(
 	}
 	b.accountingCloser = acc
 
-	pseudosettleService := pseudosettle.New(p2ps, logger, stateStore, acc, new(big.Int).Set(enforcedRefreshRate), big.NewInt(lightRefreshRate), p2ps)
+	pseudosettleService := pseudosettle.New(p2ps, logger, stateStore, acc, new(big.Int).Set(enforcedRefreshRate), big.NewInt(lightRefreshRateUsed), p2ps)
 	if err = p2ps.AddProtocol(pseudosettleService.Protocol()); err != nil {
 		return nil, fmt.Errorf("pseudosettle service: %w", err)
 	}

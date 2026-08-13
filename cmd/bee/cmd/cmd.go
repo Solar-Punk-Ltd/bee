@@ -59,6 +59,7 @@ const (
 	optionNameChequebookMinBalance         = "chequebook-min-balance"
 	optionNameFullNode                     = "full-node"
 	optionNameLightNodeLimit               = "light-node-limit"
+	optionNameLightFactor                  = "light-factor"
 	optionNamePostageContractAddress       = "postage-stamp-address"
 	optionNamePostageContractStartBlock    = "postage-stamp-start-block"
 	optionNamePriceOracleAddress           = "price-oracle-address"
@@ -311,6 +312,7 @@ func (c *command) setAllFlags(cmd *cobra.Command) {
 	cmd.Flags().String(optionNameChequebookMinBalance, "110000000000000000", "minimum chequebook token balance required for verification, in token small units (default 11 BZZ)")
 	cmd.Flags().Bool(optionNameFullNode, false, "cause the node to start in full mode")
 	cmd.Flags().Int(optionNameLightNodeLimit, 100, "light node limit")
+	cmd.Flags().Int64(optionNameLightFactor, 10, "divisor for a light peer's refresh rate and payment threshold")
 	cmd.Flags().String(optionNamePostageContractAddress, "", "postage stamp contract address")
 	cmd.Flags().Uint64(optionNamePostageContractStartBlock, 0, "postage stamp contract start block number")
 	cmd.Flags().String(optionNamePriceOracleAddress, "", "price oracle contract address")

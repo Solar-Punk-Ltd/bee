@@ -330,6 +330,7 @@ func buildBeeNode(ctx context.Context, c *command, cmd *cobra.Command, logger lo
 		AutoTLSRegistrationEndpoint:   c.config.GetString(optionAutoTLSRegistrationEndpoint),
 		FullNodeMode:                  fullNode,
 		LightNodeLimit:                c.config.GetInt(optionNameLightNodeLimit),
+		LightFactor:                   c.config.GetInt64(optionNameLightFactor),
 		Logger:                        logger,
 		MinimumGasTipCap:              c.config.GetUint64(optionNameMinimumGasTipCap),
 		GasLimitFallback:              c.config.GetUint64(optionNameGasLimitFallback),
