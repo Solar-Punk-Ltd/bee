@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -697,6 +698,164 @@ func TestClosestPeer(t *testing.T) {
 			t.Fatal("closest peer", err)
 		}
 	})
+}
+
+// TestOverDraftRefreshCounted covers the one wait on the retrieval path that bee performs and does not
+// report. When every candidate peer is overdrafted, retrieval sleeps overDraftRefresh for the peers'
+// allowance to accrue and then retries, so a node throttled by settlement is indistinguishable from a
+// slow network in every series bee publishes.
+//
+// Requests are made non-origin deliberately. An origin request arms a one-second preemptive ticker
+// whose retries race the sleeps, which would make the counts here a range rather than a number.
+func TestOverDraftRefreshCounted(t *testing.T) {
+	t.Parallel()
+
+	// Full-length addresses, because the peer-list branch of the topology mock compares distances and
+	// refuses to compare a short address with a long one. The client sits at ff.. so that every chunk
+	// below is nearer the server than the client: a non-origin request refuses an upstream peer, and a
+	// client nearer the chunk than its only peer retrieves nothing at all.
+	const (
+		serverHex = "0300000000000000000000000000000000000000000000000000000000000000"
+		clientHex = "ff00000000000000000000000000000000000000000000000000000000000000"
+		sourceHex = "0900000000000000000000000000000000000000000000000000000000000000"
+	)
+
+	// newClient returns a retrieval service whose only peer refuses the first overdrafts credit
+	// preparations and accepts every one after that.
+	newClient := func(t *testing.T, chunk swarm.Chunk, overdrafts int32) *retrieval.Service {
+		t.Helper()
+
+		pricer := pricermock.NewMockService(defaultPrice, defaultPrice)
+		serverAddress := swarm.MustParseHexAddress(serverHex)
+
+		serverStorer := &testStorer{ChunkStore: inmemchunkstore.New()}
+		if err := serverStorer.Put(context.Background(), chunk); err != nil {
+			t.Fatal(err)
+		}
+		server := createRetrieval(t, serverAddress, serverStorer, nil, nil, log.Noop,
+			accountingmock.NewAccounting(), pricer, nil, false)
+
+		var (
+			prepared atomic.Int32
+			credit   *accountingmock.Service
+		)
+		credit = accountingmock.NewAccounting(accountingmock.WithPrepareCreditFunc(
+			func(peer swarm.Address, price uint64, _ bool) (accounting.Action, error) {
+				if prepared.Add(1) <= overdrafts {
+					return nil, accounting.ErrOverdraft
+				}
+				return credit.MakeCreditAction(peer, price), nil
+			}))
+
+		// WithPeers, not WithClosestPeer: only the peer-list branch of the topology mock honours
+		// skipPeers, and a peer that cannot be skipped never drives closestPeer to ErrNotFound, which
+		// is the branch that sleeps.
+		peers := topologymock.NewTopologyDriver(topologymock.WithPeers(serverAddress))
+
+		return createRetrieval(t, swarm.MustParseHexAddress(clientHex), nil,
+			streamtest.New(streamtest.WithProtocols(server.Protocol())), peers, log.Noop, credit, pricer, nil, false)
+	}
+
+	retrieve := func(t *testing.T, client *retrieval.Service, chunk swarm.Chunk) {
+		t.Helper()
+
+		ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
+		defer cancel()
+
+		got, err := client.RetrieveChunk(ctx, chunk.Address(), swarm.MustParseHexAddress(sourceHex))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(got.Data(), chunk.Data()) {
+			t.Fatalf("got data %x, want %x", got.Data(), chunk.Data())
+		}
+	}
+
+	for _, tc := range []struct {
+		name       string
+		fixture    string
+		overdrafts int32
+	}{
+		{name: "a peer with allowance never sleeps", fixture: "0025", overdrafts: 0},
+		{name: "one overdraft is one sleep", fixture: "02c2", overdrafts: 1},
+		{name: "two overdrafts are two sleeps", fixture: "7000", overdrafts: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			chunk := testingc.FixtureChunk(tc.fixture)
+			client := newClient(t, chunk, tc.overdrafts)
+
+			if before := overDraftSleeps(t, client); before != 0 {
+				t.Fatalf("counter started at %v, want 0", before)
+			}
+
+			started := time.Now()
+			retrieve(t, client, chunk)
+			elapsed := time.Since(started)
+
+			if got := overDraftSleeps(t, client); got != float64(tc.overdrafts) {
+				t.Fatalf("counted %v overdraft sleeps, want %d", got, tc.overdrafts)
+			}
+
+			// The count is only worth publishing if it means the wall time it claims to. Each sleep is
+			// a full overDraftRefresh, so the request cannot have finished sooner than their sum.
+			if want := retrieval.OverDraftRefresh * time.Duration(tc.overdrafts); elapsed < want {
+				t.Fatalf("retrieval took %s, too fast to have slept %d times (%s)", elapsed, tc.overdrafts, want)
+			}
+		})
+	}
+}
+
+// TestOverDraftRefreshNotCountedWhenCancelled proves the counter records sleeps that completed rather
+// than sleeps that were entered. A request abandoned mid-wait never got its allowance back, and
+// counting it would overstate the settlement cost of every cancelled read.
+func TestOverDraftRefreshNotCountedWhenCancelled(t *testing.T) {
+	t.Parallel()
+
+	chunk := testingc.FixtureChunk("0025")
+	pricer := pricermock.NewMockService(defaultPrice, defaultPrice)
+	serverAddress := swarm.MustParseHexAddress("0300000000000000000000000000000000000000000000000000000000000000")
+
+	serverStorer := &testStorer{ChunkStore: inmemchunkstore.New()}
+	if err := serverStorer.Put(context.Background(), chunk); err != nil {
+		t.Fatal(err)
+	}
+	server := createRetrieval(t, serverAddress, serverStorer, nil, nil, log.Noop,
+		accountingmock.NewAccounting(), pricer, nil, false)
+
+	// Always overdrafted, so the retrieval can only ever be sleeping or about to.
+	credit := accountingmock.NewAccounting(accountingmock.WithPrepareCreditFunc(
+		func(swarm.Address, uint64, bool) (accounting.Action, error) {
+			return nil, accounting.ErrOverdraft
+		}))
+
+	client := createRetrieval(t, swarm.MustParseHexAddress("ff00000000000000000000000000000000000000000000000000000000000000"), nil,
+		streamtest.New(streamtest.WithProtocols(server.Protocol())),
+		topologymock.NewTopologyDriver(topologymock.WithPeers(serverAddress)),
+		log.Noop, credit, pricer, nil, false)
+
+	// Well inside the first sleep, so it is cancelled having waited and never having finished waiting.
+	ctx, cancel := context.WithTimeout(context.Background(), retrieval.OverDraftRefresh/3)
+	defer cancel()
+
+	source := swarm.MustParseHexAddress("0900000000000000000000000000000000000000000000000000000000000000")
+	if _, err := client.RetrieveChunk(ctx, chunk.Address(), source); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("retrieval returned %v, want %v", err, context.DeadlineExceeded)
+	}
+	if got := overDraftSleeps(t, client); got != 0 {
+		t.Fatalf("counted %v sleeps, want 0: a cancelled wait is not a completed one", got)
+	}
+}
+
+func overDraftSleeps(t *testing.T, s *retrieval.Service) float64 {
+	t.Helper()
+
+	count, err := s.OverDraftRefreshCount()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return count
 }
 
 func createRetrieval(

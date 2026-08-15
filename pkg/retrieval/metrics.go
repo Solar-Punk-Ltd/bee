@@ -26,6 +26,7 @@ type metrics struct {
 	ChunkPrice            prometheus.Summary
 	TotalErrors           prometheus.Counter
 	ChunkRetrieveTime     prometheus.Histogram
+	OverDraftRefreshCount prometheus.Counter
 }
 
 func newMetrics() metrics {
@@ -99,6 +100,15 @@ func newMetrics() metrics {
 			Help:      "Histogram for time taken to retrieve a chunk.",
 		},
 		),
+		// Counts completed overdraft sleeps, not entered ones: a request whose context is cancelled
+		// mid-sleep never waited the full period and must not be counted as though it had. Multiply by
+		// overDraftRefresh for the wall time a node lost to settlement.
+		OverDraftRefreshCount: prometheus.NewCounter(prometheus.CounterOpts{
+			Namespace: m.Namespace,
+			Subsystem: subsystem,
+			Name:      "overdraft_refresh_count",
+			Help:      "Number of completed sleeps waiting for a peer's payment allowance to refresh.",
+		}),
 	}
 }
 

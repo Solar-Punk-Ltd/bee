@@ -227,6 +227,7 @@ func (s *Service) RetrieveChunk(ctx context.Context, chunkAddr, sourcePeerAddr s
 
 					select {
 					case <-time.After(overDraftRefresh):
+						s.metrics.OverDraftRefreshCount.Inc()
 						retry()
 						continue
 					case <-ctx.Done():

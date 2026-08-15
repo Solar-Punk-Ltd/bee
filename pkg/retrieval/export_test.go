@@ -7,9 +7,21 @@ package retrieval
 import (
 	"context"
 
+	dto "github.com/prometheus/client_model/go"
+
 	"github.com/ethersphere/bee/v2/pkg/p2p"
 	"github.com/ethersphere/bee/v2/pkg/swarm"
 )
+
+const OverDraftRefresh = overDraftRefresh
+
+func (s *Service) OverDraftRefreshCount() (float64, error) {
+	var m dto.Metric
+	if err := s.metrics.OverDraftRefreshCount.Write(&m); err != nil {
+		return 0, err
+	}
+	return m.GetCounter().GetValue(), nil
+}
 
 func (s *Service) Handler(ctx context.Context, p p2p.Peer, stream p2p.Stream) error {
 	return s.handler(ctx, p, stream)
