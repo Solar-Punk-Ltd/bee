@@ -719,3 +719,42 @@ func createRetrieval(
 	t.Cleanup(func() { ret.Close() })
 	return ret
 }
+
+// TestRetrieveAttemptsSurviveCancellation covers a data race rather than a behaviour: singleflight
+// returns to a caller whose context is done while the shared closure keeps running for the other
+// waiters, so RetrieveChunk's deferred metrics observation reads the attempt counter that closure is
+// still incrementing. Only `go test -race` can fail this, and without the fix it does, every time.
+func TestRetrieveAttemptsSurviveCancellation(t *testing.T) {
+	t.Parallel()
+
+	chunk := testingc.FixtureChunk("0025")
+	pricer := pricermock.NewMockService(defaultPrice, defaultPrice)
+	serverAddress := swarm.MustParseHexAddress("0300000000000000000000000000000000000000000000000000000000000000")
+
+	serverStorer := &testStorer{ChunkStore: inmemchunkstore.New()}
+	if err := serverStorer.Put(context.Background(), chunk); err != nil {
+		t.Fatal(err)
+	}
+	server := createRetrieval(t, serverAddress, serverStorer, nil, nil, log.Noop,
+		accountingmock.NewAccounting(), pricer, nil, false)
+
+	// A permanently overdrafted peer keeps the closure in its retry loop for the whole test, which is
+	// what guarantees it is still running when the cancelled caller returns and reads.
+	credit := accountingmock.NewAccounting(accountingmock.WithPrepareCreditFunc(
+		func(swarm.Address, uint64, bool) (accounting.Action, error) {
+			return nil, accounting.ErrOverdraft
+		}))
+
+	client := createRetrieval(t, swarm.MustParseHexAddress("ff00000000000000000000000000000000000000000000000000000000000000"), nil,
+		streamtest.New(streamtest.WithProtocols(server.Protocol())),
+		topologymock.NewTopologyDriver(topologymock.WithPeers(serverAddress)),
+		log.Noop, credit, pricer, nil, false)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	source := swarm.MustParseHexAddress("0900000000000000000000000000000000000000000000000000000000000000")
+	if _, err := client.RetrieveChunk(ctx, chunk.Address(), source); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("retrieval returned %v, want %v", err, context.DeadlineExceeded)
+	}
+}

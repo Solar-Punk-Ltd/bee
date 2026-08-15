@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/ethersphere/bee/v2/pkg/accounting"
@@ -147,11 +148,15 @@ func (s *Service) RetrieveChunk(ctx context.Context, chunkAddr, sourcePeerAddr s
 		flightRoute = chunkAddr.String() + originSuffix
 	}
 
-	totalRetrieveAttempts := 0
+	// Atomic because singleflight hands this caller its result the moment its own context is done,
+	// while the shared closure below keeps running for the other waiters and keeps counting. The
+	// deferred read then overlaps a live write, which the race detector reports on any cancelled
+	// retrieval that shares a chunk with a live one.
+	var totalRetrieveAttempts atomic.Int64
 	requestStartTime := time.Now()
 	defer func() {
 		s.metrics.RequestDurationTime.Observe(time.Since(requestStartTime).Seconds())
-		s.metrics.RequestAttempts.Observe(float64(totalRetrieveAttempts))
+		s.metrics.RequestAttempts.Observe(float64(totalRetrieveAttempts.Load()))
 	}()
 
 	spanCtx := context.WithoutCancel(ctx)
@@ -203,7 +208,7 @@ func (s *Service) RetrieveChunk(ctx context.Context, chunkAddr, sourcePeerAddr s
 				retry()
 			case <-retryC:
 
-				totalRetrieveAttempts++
+				totalRetrieveAttempts.Add(1)
 				s.metrics.PeerRequestCounter.Inc()
 
 				fullSkip := append(skip.ChunkPeers(chunkAddr), s.errSkip.ChunkPeers(chunkAddr)...)
